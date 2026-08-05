@@ -1,4 +1,5 @@
 import React from 'react';
+import ReactMarkdown from 'react-markdown';
 import { SourceCard } from './SourceCard';
 import { Bot, User, Layers } from 'lucide-react';
 
@@ -11,7 +12,13 @@ export const ChatMessage = ({ message }) => {
                 {isUser ? <User size={18} /> : <Bot size={18} />}
             </div>
             <div className="message-bubble">
-                <div className="message-text">{message.content}</div>
+                <div className="message-text">
+                    {isUser ? (
+                        message.content
+                    ) : (
+                        <ReactMarkdown>{message.content}</ReactMarkdown>
+                    )}
+                </div>
 
                 {!isUser && message.sources && message.sources.length > 0 && (
                     <div className="citations-block">
