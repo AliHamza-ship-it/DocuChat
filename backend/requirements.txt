@@ -1,0 +1,11 @@
+fastapi[all]
+supabase
+openai
+sentence-transformers
+pydantic
+PyMuPDF
+python-docx
+faiss-cpu
+numpy
+python-multipart
+python-dotenv

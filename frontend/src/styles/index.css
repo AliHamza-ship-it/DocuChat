@@ -1,0 +1,560 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+
+:root {
+    /* Switched to Light Theme Colors */
+    --bg-main: #F9FAFB;
+    --bg-card: #FFFFFF;
+    --bg-card-hover: #F3F4F6;
+    --border-color: #E5E7EB;
+    --border-glow: rgba(37, 99, 235, 0.15);
+
+    --primary-cyan: #2563EB;
+    /* Solid Blue */
+    --primary-violet: #1D4ED8;
+    /* Darker Hover Blue */
+    --accent-emerald: #10B981;
+    --accent-pink: #EC4899;
+
+    --text-main: #111827;
+    --text-muted: #6B7280;
+
+    --glass-backdrop: blur(16px);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+body {
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    /* Removed the dark radial gradient for a clean look */
+    min-height: 100vh;
+    overflow: hidden;
+}
+
+/* App Container */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* Navbar */
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+    background: #FFFFFF;
+    border-bottom: 1px solid var(--border-color);
+    height: 64px;
+}
+
+.nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.brand-icon {
+    background: var(--primary-cyan);
+    color: white;
+    padding: 0.5rem;
+    border-radius: 10px;
+    display: flex;
+}
+
+.brand-title {
+    font-weight: 700;
+    font-size: 1.25rem;
+    letter-spacing: -0.02em;
+}
+
+.badge {
+    font-size: 0.65rem;
+    background: rgba(37, 99, 235, 0.1);
+    color: var(--primary-cyan);
+    padding: 2px 8px;
+    border-radius: 12px;
+    border: 1px solid rgba(37, 99, 235, 0.2);
+}
+
+.nav-user {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.user-email {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+}
+
+.btn-logout {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-main);
+    padding: 0.4rem 0.8rem;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    transition: all 0.2s;
+}
+
+.btn-logout:hover {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #DC2626;
+}
+
+/* Layout */
+.main-layout {
+    display: flex;
+    flex: 1;
+    height: calc(100vh - 64px);
+}
+
+/* Sidebar */
+.sidebar {
+    width: 320px;
+    background: #FFFFFF;
+    border-right: 1px solid var(--border-color);
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+/* Uploader */
+.uploader-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    padding: 1rem;
+    border-radius: 14px;
+}
+
+.uploader-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.uploader-sub {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
+}
+
+.dropzone {
+    border: 2px dashed #D1D5DB;
+    border-radius: 10px;
+    padding: 1.25rem;
+    text-align: center;
+    transition: all 0.2s;
+    background: #F9FAFB;
+}
+
+.dropzone:hover {
+    border-color: var(--primary-cyan);
+    background: rgba(37, 99, 235, 0.05);
+}
+
+.file-input {
+    display: none;
+}
+
+.file-label {
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.upload-icon {
+    color: var(--primary-cyan);
+}
+
+/* Document Library */
+.doc-library-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
+}
+
+.doc-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.doc-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem;
+    background: #F9FAFB;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.doc-icon {
+    color: var(--primary-cyan);
+}
+
+.doc-details {
+    display: flex;
+    flex-direction: column;
+}
+
+.doc-name {
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.doc-date {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+}
+
+/* Viewport & Chat */
+.chat-viewport {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 1.5rem;
+}
+
+.messages-container {
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    padding-right: 0.5rem;
+}
+
+.chat-row {
+    display: flex;
+    gap: 1rem;
+    max-width: 85%;
+}
+
+.user-row {
+    align-self: flex-end;
+    flex-direction: row-reverse;
+}
+
+.avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--primary-cyan);
+    color: white;
+}
+
+.user-row .avatar {
+    background: var(--accent-emerald);
+}
+
+.message-bubble {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    padding: 1rem 1.25rem;
+    border-radius: 16px;
+    line-height: 1.6;
+    font-size: 0.925rem;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+}
+
+.user-row .message-bubble {
+    background: rgba(37, 99, 235, 0.05);
+    border-color: rgba(37, 99, 235, 0.2);
+}
+
+/* Citations */
+.citations-block {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.citations-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--accent-emerald);
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.sources-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 0.5rem;
+}
+
+.source-card {
+    background: #F9FAFB;
+    border: 1px solid var(--border-color);
+    padding: 0.6rem;
+    border-radius: 8px;
+}
+
+.source-card-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.65rem;
+    margin-bottom: 0.25rem;
+}
+
+.source-badge {
+    color: var(--primary-cyan);
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.similarity-badge {
+    color: var(--accent-emerald);
+    font-weight: 600;
+}
+
+.source-file-info {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 0.4rem;
+}
+
+.source-content {
+    font-size: 0.725rem;
+    color: #4B5563;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Input Bar */
+.chat-input-area {
+    margin-top: 1rem;
+}
+
+.input-glass-wrapper {
+    display: flex;
+    align-items: center;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 0.5rem 0.75rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+.input-glass-wrapper:focus-within {
+    border-color: var(--primary-cyan);
+    box-shadow: 0 0 0 2px var(--border-glow);
+}
+
+.input-glass-wrapper input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-main);
+    padding: 0.5rem;
+    font-size: 0.95rem;
+}
+
+.btn-send {
+    background: var(--primary-cyan);
+    border: none;
+    color: white;
+    padding: 0.6rem;
+    border-radius: 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s;
+}
+
+.btn-send:hover {
+    background: var(--primary-violet);
+}
+
+/* Auth Styling */
+.auth-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    padding: 2.5rem;
+    border-radius: 20px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+}
+
+/* Added margin-bottom to fix the text spacing issue */
+.auth-header {
+    margin-bottom: 2rem;
+}
+
+.auth-header h2 {
+    font-size: 1.875rem;
+    font-weight: 800;
+    margin-bottom: 0.25rem;
+}
+
+.auth-header p {
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 0.95rem;
+}
+
+.brand-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--primary-cyan);
+    font-weight: 700;
+    margin-bottom: 0.75rem;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-bottom: 1.25rem;
+}
+
+.form-group label {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-main);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.form-group input {
+    background: #F9FAFB;
+    border: 1px solid var(--border-color);
+    padding: 0.65rem 1rem;
+    border-radius: 8px;
+    color: var(--text-main);
+    outline: none;
+    transition: all 0.2s;
+}
+
+.form-group input:focus {
+    border-color: var(--primary-cyan);
+    box-shadow: 0 0 0 2px var(--border-glow);
+}
+
+.form-row {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+.btn-primary {
+    background: var(--primary-cyan);
+    border: none;
+    color: white;
+    padding: 0.75rem;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    transition: background-color 0.2s;
+}
+
+.btn-primary:hover {
+    background: var(--primary-violet);
+}
+
+.btn-full {
+    width: 100%;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: var(--primary-cyan);
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-top: 1.5rem;
+}
+
+.btn-link:hover {
+    text-decoration: underline;
+}
+
+.auth-footer {
+    text-align: center;
+}
+
+.alert {
+    padding: 0.75rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    margin-bottom: 1.25rem;
+    font-weight: 500;
+}
+
+.alert-danger {
+    background: #FEF2F2;
+    color: #DC2626;
+    border: 1px solid #F87171;
+}
+
+.alert-info {
+    background: #EFF6FF;
+    color: #2563EB;
+    border: 1px solid #93C5FD;
+}
+
+.animate-spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
