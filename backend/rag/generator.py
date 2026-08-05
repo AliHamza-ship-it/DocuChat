@@ -50,7 +50,7 @@ class RAGGenerator:
             # Fallback model attempt if primary free model is busy
             try:
                 response = self.client.chat.completions.create(
-                    model="google/gemma-2-9b-it:free",
+                    model="openrouter/free",  
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": query}
