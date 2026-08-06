@@ -1,8 +1,9 @@
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 class ChatRequest(BaseModel):
     query: str
+    session_id: Optional[str] = None  # Allow the frontend to send the session ID
     
 class Citation(BaseModel):
     document_id: str

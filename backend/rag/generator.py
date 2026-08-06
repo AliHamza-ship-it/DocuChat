@@ -95,4 +95,21 @@ class RAGGenerator:
             for word in error_msg.split():
                 yield word + " "
 
+    def generate_chat_title(self, first_query: str) -> str:
+        """Generates a concise 3-4 word title for a new conversation based on the first prompt."""
+        try:
+            prompt = f"Summarize the following user request into a concise 3-4 word title. Return ONLY the title text, with no quotes, markdown, or punctuation.\n\nQuery: {first_query}"
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=15
+            )
+            title = response.choices[0].message.content.strip()
+            return title if title else "New Conversation"
+        except Exception:
+            # Fallback title if API call fails
+            words = first_query.split()[:4]
+            return " ".join(words).title() if words else "New Conversation"
+
 rag_generator = RAGGenerator()

@@ -46,10 +46,21 @@ class AuthService:
                 "email": user_data.email,
                 "password": user_data.password
             })
+            
+            user_obj = response.user
+            metadata = getattr(user_obj, "user_metadata", {}) or {}
+            
+            # Construct a robust user object containing id, email, and metadata
             return {
                 "access_token": response.session.access_token,
                 "token_type": "bearer",
-                "user": response.user.user_metadata
+                "user": {
+                    "id": user_obj.id,
+                    "email": user_obj.email,
+                    "name": metadata.get("name", user_obj.email.split("@")[0]),
+                    "age": metadata.get("age"),
+                    "country": metadata.get("country")
+                }
             }
         except Exception as e:
             raise HTTPException(status_code=401, detail="Invalid email or password. Verify your email if you haven't.")

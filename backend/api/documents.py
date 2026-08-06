@@ -1,5 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
-from typing import List
+from typing import List, Any
 from backend.auth.supabase_auth import get_current_user
 from backend.database.supabase_client import get_supabase_client
 from backend.rag.parser import parse_pdf, parse_docx
@@ -10,10 +10,18 @@ from backend.schemas.document import UploadResponse, DocumentResponse
 
 router = APIRouter()
 
+def get_user_id(user: Any) -> str:
+    """Helper to safely extract user ID from object or dictionary."""
+    if hasattr(user, "id"):
+        return str(user.id)
+    if isinstance(user, dict) and "id" in user:
+        return str(user["id"])
+    raise HTTPException(status_code=401, detail="Could not resolve user identity.")
+
 @router.post("/upload", response_model=UploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
+    current_user: Any = Depends(get_current_user)
 ):
     filename = file.filename
     ext = filename.split(".")[-1].lower()
@@ -37,7 +45,7 @@ async def upload_document(
     if not chunks_data:
         raise HTTPException(status_code=400, detail="Document contains no indexable content.")
 
-    user_id = current_user.id
+    user_id = get_user_id(current_user)
     supabase = get_supabase_client()
 
     # 3. Create document record in Supabase
@@ -56,7 +64,7 @@ async def upload_document(
     metadatas = [c["metadata"] for c in chunks_data]
     embeddings = embedding_service.generate_batch_embeddings(texts_to_embed)
 
-    # 5. Store embeddings in vector store (pgvector + FAISS fallback)
+    # 5. Store embeddings in vector store
     vector_store.store_chunks(
         document_id=document_id,
         user_id=user_id,
@@ -72,7 +80,8 @@ async def upload_document(
     )
 
 @router.get("/list", response_model=List[DocumentResponse])
-def list_documents(current_user: dict = Depends(get_current_user)):
+def list_documents(current_user: Any = Depends(get_current_user)):
+    user_id = get_user_id(current_user)
     supabase = get_supabase_client()
-    res = supabase.table("documents").select("*").eq("user_id", current_user.id).order("created_at", desc=True).execute()
+    res = supabase.table("documents").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
     return res.data or []

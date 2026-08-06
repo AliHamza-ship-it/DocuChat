@@ -4,8 +4,10 @@ import { AuthPage } from './pages/AuthPage';
 import { ChatPage } from './pages/ChatPage';
 
 const AppContent = () => {
-  const { token } = useAuth();
-  return token ? <ChatPage /> : <AuthPage />;
+  const { token, user } = useAuth();
+
+  // Strict guard: requires both a valid token and a loaded user object
+  return (token && user) ? <ChatPage /> : <AuthPage />;
 };
 
 export default function App() {

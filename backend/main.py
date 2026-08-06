@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.core.config import settings
 from backend.api import auth, documents, chat
+from backend.api.history import router as history_router
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -21,6 +23,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(documents.router, prefix="/api/docs", tags=["Documents"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
+app.include_router(history_router, prefix="/api/history", tags=["History"])
 
 @app.get("/health")
 def health_check():
