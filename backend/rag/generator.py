@@ -12,11 +12,11 @@ class RAGGenerator:
             base_url="https://openrouter.ai/api/v1",
             api_key=settings.OPENROUTER_API_KEY,
         )
-        # Using a reliable free model on OpenRouter
-        self.model_name = "meta-llama/llama-3.3-70b-instruct:free"
+        # Verified active OpenRouter free model
+        self.model_name = "openai/gpt-oss-20b:free"
 
     def generate_grounded_answer(self, query: str, context_chunks: list[dict]) -> str:
-        """Generates a grounded response with citations or returns explicit refusal."""
+        """Generates a grounded response with citations or returns explicit refusal (Non-streaming)."""
         if not context_chunks:
             return "I cannot answer this question because no relevant documents or sections were found."
 
@@ -47,19 +47,52 @@ class RAGGenerator:
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"OpenRouter API error: {str(e)}")
-            # Fallback model attempt if primary free model is busy
-            try:
-                response = self.client.chat.completions.create(
-                    model="openrouter/free",  
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": query}
-                    ],
-                    temperature=0.1,
-                    max_tokens=1000
-                )
-                return response.choices[0].message.content.strip()
-            except Exception as fallback_err:
-                return f"An error occurred while generating the answer: {str(fallback_err)}"
+            return f"An error occurred while generating the answer: {str(e)}"
+
+    def stream_grounded_answer(self, query: str, context_chunks: list[dict]):
+        """Generates a grounded response and yields it token-by-token for UI streaming."""
+        if not context_chunks:
+            # Splits the fallback message to stream it word-by-word
+            refusal_msg = "I cannot answer this question because no relevant documents or sections were found."
+            for word in refusal_msg.split():
+                yield word + " "
+            return
+
+        # Format context into formatted block for the prompt
+        formatted_context_parts = []
+        for idx, chunk in enumerate(context_chunks, 1):
+            meta = chunk.get("metadata", {})
+            source_file = meta.get("source", "Unknown Document")
+            page_num = meta.get("page", 1)
+            content = chunk.get("content", "")
+            formatted_context_parts.append(
+                f"--- Chunk {idx} | Source: {source_file} | Page: {page_num} ---\n{content}"
+            )
+
+        context_block = "\n\n".join(formatted_context_parts)
+        system_prompt = SYSTEM_RAG_PROMPT.format(context_block=context_block)
+
+        try:
+            response_stream = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": query}
+                ],
+                temperature=0.1,
+                max_tokens=1000,
+                stream=True 
+            )
+            
+            # Iterate through the chunks as they arrive from OpenRouter
+            for chunk in response_stream:
+                if chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
+                    
+        except Exception as e:
+            logger.error(f"OpenRouter Streaming API error: {str(e)}")
+            error_msg = f"\n\nAn error occurred while generating the answer: {str(e)}"
+            for word in error_msg.split():
+                yield word + " "
 
 rag_generator = RAGGenerator()

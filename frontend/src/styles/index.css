@@ -558,3 +558,23 @@ body {
         transform: rotate(360deg);
     }
 }
+
+/* Markdown Table Styles */
+.markdown-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: 0.9rem;
+}
+
+.markdown-th,
+.markdown-td {
+    border: 1px solid var(--border-color);
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+}
+
+.markdown-th {
+    background-color: #F3F4F6;
+    font-weight: 600;
+}

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Navbar } from '../components/Navbar';
 import { Sidebar } from '../components/Sidebar';
 import { ChatMessage } from '../components/ChatMessage';
-import api from '../api/client';
+import { streamChatQuery } from '../api/client';
 import { Send, Loader2, Sparkles } from 'lucide-react';
 
 export const ChatPage = () => {
@@ -21,29 +21,59 @@ export const ChatPage = () => {
         e.preventDefault();
         if (!inputQuery.trim() || loading) return;
 
-        const userMessage = { role: 'user', content: inputQuery, sources: [] };
-        setMessages((prev) => [...prev, userMessage]);
-        const currentQuery = inputQuery;
+        const userQuery = inputQuery.trim();
         setInputQuery('');
         setLoading(true);
 
+        // Add user prompt and create blank assistant placeholder for live stream
+        setMessages((prev) => [
+            ...prev,
+            { role: 'user', content: userQuery, sources: [] },
+            { role: 'assistant', content: '', sources: [] }
+        ]);
+
         try {
-            const res = await api.post('/chat/query', { query: currentQuery });
-            const assistantMessage = {
-                role: 'assistant',
-                content: res.data.answer,
-                sources: res.data.sources
-            };
-            setMessages((prev) => [...prev, assistantMessage]);
-        } catch (err) {
-            setMessages((prev) => [
-                ...prev,
-                {
-                    role: 'assistant',
-                    content: 'Sorry, an error occurred while searching your documents. Please try again.',
-                    sources: []
+            await streamChatQuery(
+                userQuery,
+                (sources) => {
+                    // Update sources on placeholder message
+                    setMessages((prev) => {
+                        const updated = [...prev];
+                        const lastIndex = updated.length - 1;
+                        updated[lastIndex] = {
+                            ...updated[lastIndex],
+                            sources: sources
+                        };
+                        return updated;
+                    });
+                },
+                (token) => {
+                    // Append incoming stream tokens to the assistant message
+                    setMessages((prev) => {
+                        const updated = [...prev];
+                        const lastIndex = updated.length - 1;
+                        updated[lastIndex] = {
+                            ...updated[lastIndex],
+                            content: updated[lastIndex].content + token
+                        };
+                        return updated;
+                    });
                 }
-            ]);
+            );
+        } catch (err) {
+            console.error('Streaming error:', err);
+            setMessages((prev) => {
+                const updated = [...prev];
+                const lastIndex = updated.length - 1;
+                if (!updated[lastIndex].content) {
+                    updated[lastIndex] = {
+                        role: 'assistant',
+                        content: 'Sorry, an error occurred while searching your documents. Please try again.',
+                        sources: []
+                    };
+                }
+                return updated;
+            });
         } finally {
             setLoading(false);
         }
@@ -60,7 +90,7 @@ export const ChatPage = () => {
                         {messages.map((msg, index) => (
                             <ChatMessage key={index} message={msg} />
                         ))}
-                        {loading && (
+                        {loading && messages[messages.length - 1]?.role === 'assistant' && !messages[messages.length - 1]?.content && (
                             <div className="chat-row assistant-row">
                                 <div className="avatar"><Sparkles size={18} className="animate-pulse" /></div>
                                 <div className="message-bubble loading-bubble">

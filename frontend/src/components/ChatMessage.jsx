@@ -1,10 +1,17 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import { SourceCard } from './SourceCard';
 import { Bot, User, Layers } from 'lucide-react';
 
 export const ChatMessage = ({ message }) => {
     const isUser = message.role === 'user';
+
+    // Normalize any <br> or <br/> tags into standard HTML breaks for clean rendering
+    const formattedContent = message.content
+        ? message.content.replace(/<br\s*\/?>/gi, '<br />')
+        : '';
 
     return (
         <div className={`chat-row ${isUser ? 'user-row' : 'assistant-row'}`}>
@@ -16,7 +23,17 @@ export const ChatMessage = ({ message }) => {
                     {isUser ? (
                         message.content
                     ) : (
-                        <ReactMarkdown>{message.content}</ReactMarkdown>
+                        <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            rehypePlugins={[rehypeRaw]}
+                            components={{
+                                table: ({ node, ...props }) => <table className="markdown-table" {...props} />,
+                                th: ({ node, ...props }) => <th className="markdown-th" {...props} />,
+                                td: ({ node, ...props }) => <td className="markdown-td" {...props} />
+                            }}
+                        >
+                            {formattedContent}
+                        </ReactMarkdown>
                     )}
                 </div>
 
