@@ -1,37 +1,63 @@
+import logging
+import re
 from openai import OpenAI
 from backend.core.config import settings
 from backend.prompts.system_prompts import SYSTEM_RAG_PROMPT
-import logging
 
 logger = logging.getLogger(__name__)
 
 class RAGGenerator:
     def __init__(self):
-        # OpenRouter provides an OpenAI-compatible interface
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=settings.OPENROUTER_API_KEY,
+            default_headers={
+                "HTTP-Referer": "http://localhost:3000",
+                "X-Title": "DocuChat",
+            }
         )
-        # Verified active OpenRouter free model
-        self.model_name = "openai/gpt-oss-20b:free"
+        self.model_name = "nvidia/nemotron-3-super-120b-a12b:free"
 
-    def generate_grounded_answer(self, query: str, context_chunks: list[dict]) -> str:
-        """Generates a grounded response with citations or returns explicit refusal (Non-streaming)."""
+    def _clean_response(self, text: str) -> str:
+        if not text:
+            return ""
+
+        answer_match = re.search(r'<answer>(.*?)(?:</answer>|$)', text, flags=re.DOTALL | re.IGNORECASE)
+        if answer_match:
+            text = answer_match.group(1)
+
+        text = re.sub(r'<think>.*?(?:</think>|$)', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<reasoning>.*?(?:</reasoning>|$)', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'</?(?:think|answer|reasoning)>', '', text, flags=re.IGNORECASE)
+
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            if len(lines) >= 2 and lines[0].startswith("```"):
+                if lines[-1].strip() == "```":
+                    cleaned = "\n".join(lines[1:-1])
+                else:
+                    cleaned = "\n".join(lines[1:])
+
+        return cleaned.strip()
+
+    def _format_context(self, context_chunks: list[dict]) -> str:
         if not context_chunks:
-            return "I cannot answer this question because no relevant documents or sections were found."
-
-        # Format context into formatted block for the prompt
-        formatted_context_parts = []
+            return "No document context available for this query."
+            
+        formatted_parts = []
         for idx, chunk in enumerate(context_chunks, 1):
             meta = chunk.get("metadata", {})
             source_file = meta.get("source", "Unknown Document")
             page_num = meta.get("page", 1)
-            content = chunk.get("content", "")
-            formatted_context_parts.append(
-                f"--- Chunk {idx} | Source: {source_file} | Page: {page_num} ---\n{content}"
+            content = chunk.get("content", "").strip()
+            formatted_parts.append(
+                f"[DOCUMENT CHUNK {idx}]\nSource File: {source_file}\nPage Number: {page_num}\nContent:\n{content}"
             )
+        return "\n\n----------------------------------------\n\n".join(formatted_parts)
 
-        context_block = "\n\n".join(formatted_context_parts)
+    def generate_grounded_answer(self, query: str, context_chunks: list[dict]) -> str:
+        context_block = self._format_context(context_chunks)
         system_prompt = SYSTEM_RAG_PROMPT.format(context_block=context_block)
 
         try:
@@ -41,35 +67,19 @@ class RAGGenerator:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": query}
                 ],
-                temperature=0.1,  # Low temperature for factual precision
-                max_tokens=1000
+                temperature=0.1,
+                frequency_penalty=0.2,
+                max_tokens=3000,
+                timeout=30.0
             )
-            return response.choices[0].message.content.strip()
+            raw_content = response.choices[0].message.content or ""
+            return self._clean_response(raw_content)
         except Exception as e:
             logger.error(f"OpenRouter API error: {str(e)}")
             return f"An error occurred while generating the answer: {str(e)}"
 
     def stream_grounded_answer(self, query: str, context_chunks: list[dict]):
-        """Generates a grounded response and yields it token-by-token for UI streaming."""
-        if not context_chunks:
-            # Splits the fallback message to stream it word-by-word
-            refusal_msg = "I cannot answer this question because no relevant documents or sections were found."
-            for word in refusal_msg.split():
-                yield word + " "
-            return
-
-        # Format context into formatted block for the prompt
-        formatted_context_parts = []
-        for idx, chunk in enumerate(context_chunks, 1):
-            meta = chunk.get("metadata", {})
-            source_file = meta.get("source", "Unknown Document")
-            page_num = meta.get("page", 1)
-            content = chunk.get("content", "")
-            formatted_context_parts.append(
-                f"--- Chunk {idx} | Source: {source_file} | Page: {page_num} ---\n{content}"
-            )
-
-        context_block = "\n\n".join(formatted_context_parts)
+        context_block = self._format_context(context_chunks)
         system_prompt = SYSTEM_RAG_PROMPT.format(context_block=context_block)
 
         try:
@@ -80,35 +90,51 @@ class RAGGenerator:
                     {"role": "user", "content": query}
                 ],
                 temperature=0.1,
-                max_tokens=1000,
-                stream=True 
+                frequency_penalty=0.2,
+                max_tokens=3000,
+                stream=True,
+                timeout=30.0
             )
-            
-            # Iterate through the chunks as they arrive from OpenRouter
+
+            full_buffer = ""
+            yielded_len = 0
+
             for chunk in response_stream:
-                if chunk.choices[0].delta.content is not None:
-                    yield chunk.choices[0].delta.content
-                    
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    delta = chunk.choices[0].delta.content
+                    full_buffer += delta
+
+                    cleaned = self._clean_response(full_buffer)
+                    tail_match = re.search(r'(<[^>]*$|```[a-z]*$)', cleaned, flags=re.IGNORECASE)
+                    safe_len = tail_match.start() if tail_match else len(cleaned)
+
+                    if safe_len > yielded_len:
+                        to_yield = cleaned[yielded_len:safe_len]
+                        yielded_len = safe_len
+                        yield to_yield
+
+            final_cleaned = self._clean_response(full_buffer)
+            if len(final_cleaned) > yielded_len:
+                yield final_cleaned[yielded_len:]
+
         except Exception as e:
             logger.error(f"OpenRouter Streaming API error: {str(e)}")
-            error_msg = f"\n\nAn error occurred while generating the answer: {str(e)}"
-            for word in error_msg.split():
-                yield word + " "
+            yield f"\n\n[Error generating answer: {str(e)}]"
 
     def generate_chat_title(self, first_query: str) -> str:
-        """Generates a concise 3-4 word title for a new conversation based on the first prompt."""
         try:
-            prompt = f"Summarize the following user request into a concise 3-4 word title. Return ONLY the title text, with no quotes, markdown, or punctuation.\n\nQuery: {first_query}"
+            prompt = f"Summarize the following query into a concise 3-4 word chat title. Return ONLY the title text without quotes or preamble.\n\nQuery: {first_query}"
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=15
+                max_tokens=15,
+                timeout=10.0
             )
-            title = response.choices[0].message.content.strip()
+            raw_title = response.choices[0].message.content or ""
+            title = self._clean_response(raw_title).strip()
             return title if title else "New Conversation"
         except Exception:
-            # Fallback title if API call fails
             words = first_query.split()[:4]
             return " ".join(words).title() if words else "New Conversation"
 

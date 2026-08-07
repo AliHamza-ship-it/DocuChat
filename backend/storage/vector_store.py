@@ -61,8 +61,8 @@ class VectorStoreManager:
         self,
         query_embedding: List[float],
         user_id: str,
-        top_k: int = 5,
-        threshold: float = 0.3
+        top_k: int = 8,
+        threshold: float = 0.15
     ) -> List[Dict[str, Any]]:
         """Performs vector search in Supabase; falls back to FAISS if primary search fails."""
         try:
@@ -125,8 +125,8 @@ class VectorStoreManager:
         self,
         query_embedding: List[float],
         user_id: str,
-        top_k: int = 5,
-        threshold: float = 0.3
+        top_k: int = 8,
+        threshold: float = 0.15
     ) -> List[Dict[str, Any]]:
         """Searches vector embeddings in the local FAISS index."""
         if not os.path.exists(self.faiss_file_path) or not os.path.exists(self.meta_file_path):

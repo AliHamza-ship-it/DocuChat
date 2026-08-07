@@ -42,11 +42,13 @@ async def chat_query(
     }).execute()
 
     query_embedding = embedding_service.generate_embedding(query_text)
+    
+    # Adjusted search: top_k=7 and threshold=0.20 for better text retrieval recall
     retrieved_chunks = vector_store.search_similar(
         query_embedding=query_embedding,
         user_id=user_id,
-        top_k=5,
-        threshold=0.35
+        top_k=7,
+        threshold=0.20
     )
 
     sources = [
@@ -60,49 +62,55 @@ async def chat_query(
     ]
 
     async def stream_generator():
-        meta_payload = {
-            'type': 'meta',
-            'session_id': session_id,
-            'title': title,
-            'is_new_session': is_new_session,
-            'sources': sources
-        }
-        yield f"data: {json.dumps(meta_payload)}\n\n"
+        try:
+            meta_payload = {
+                'type': 'meta',
+                'session_id': session_id,
+                'title': title,
+                'is_new_session': is_new_session,
+                'sources': sources
+            }
+            yield f"data: {json.dumps(meta_payload)}\n\n"
 
-        full_assistant_response = []
+            full_assistant_response = []
 
-        if hasattr(rag_generator, "stream_grounded_answer"):
-            stream = rag_generator.stream_grounded_answer(query_text, retrieved_chunks)
-        else:
-            stream = rag_generator.generate_grounded_answer(query_text, retrieved_chunks)
+            if hasattr(rag_generator, "stream_grounded_answer"):
+                stream = rag_generator.stream_grounded_answer(query_text, retrieved_chunks)
+            else:
+                stream = rag_generator.generate_grounded_answer(query_text, retrieved_chunks)
 
-        if hasattr(stream, "__aiter__"):
-            async for chunk in stream:
-                if chunk:
-                    full_assistant_response.append(chunk)
-                    yield f"data: {json.dumps({'type': 'token', 'content': chunk, 'session_id': session_id})}\n\n"
-        elif hasattr(stream, "__iter__") and not isinstance(stream, str):
-            for chunk in stream:
-                if chunk:
-                    full_assistant_response.append(chunk)
-                    yield f"data: {json.dumps({'type': 'token', 'content': chunk, 'session_id': session_id})}\n\n"
-                    await asyncio.sleep(0.005)
-        else:
-            chunk = str(stream)
-            full_assistant_response.append(chunk)
-            yield f"data: {json.dumps({'type': 'token', 'content': chunk, 'session_id': session_id})}\n\n"
+            if hasattr(stream, "__aiter__"):
+                async for chunk in stream:
+                    if chunk:
+                        full_assistant_response.append(chunk)
+                        yield f"data: {json.dumps({'type': 'token', 'content': chunk, 'session_id': session_id})}\n\n"
+            elif hasattr(stream, "__iter__") and not isinstance(stream, str):
+                for chunk in stream:
+                    if chunk:
+                        full_assistant_response.append(chunk)
+                        yield f"data: {json.dumps({'type': 'token', 'content': chunk, 'session_id': session_id})}\n\n"
+                        await asyncio.sleep(0.005)
+            else:
+                chunk = str(stream)
+                full_assistant_response.append(chunk)
+                yield f"data: {json.dumps({'type': 'token', 'content': chunk, 'session_id': session_id})}\n\n"
 
-        complete_text = "".join(full_assistant_response)
-        supabase.table("chat_messages").insert({
-            "session_id": session_id,
-            "user_id": user_id,
-            "role": "assistant",
-            "content": complete_text,
-            "sources": sources
-        }).execute()
+            complete_text = "".join(full_assistant_response)
+            supabase.table("chat_messages").insert({
+                "session_id": session_id,
+                "user_id": user_id,
+                "role": "assistant",
+                "content": complete_text,
+                "sources": sources
+            }).execute()
 
-        supabase.table("chat_sessions").update({"updated_at": "now()"}).eq("id", session_id).execute()
+            supabase.table("chat_sessions").update({"updated_at": "now()"}).eq("id", session_id).execute()
 
-        yield "data: [DONE]\n\n"
+        except Exception as err:
+            error_text = f"An error occurred: {str(err)}"
+            yield f"data: {json.dumps({'type': 'token', 'content': error_text, 'session_id': session_id})}\n\n"
+        finally:
+            # Guarantees the frontend receives [DONE] even if an error occurs mid-stream
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
