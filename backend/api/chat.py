@@ -24,7 +24,9 @@ async def chat_query(
     is_new_session = False
     if not session_id:
         is_new_session = True
+        # Generate the smart title immediately using the user's query
         title = rag_generator.generate_chat_title(query_text)
+        
         session_res = supabase.table("chat_sessions").insert({
             "user_id": user_id,
             "title": title
@@ -43,7 +45,6 @@ async def chat_query(
 
     query_embedding = embedding_service.generate_embedding(query_text)
     
-    # Adjusted search: top_k=7 and threshold=0.20 for better text retrieval recall
     retrieved_chunks = vector_store.search_similar(
         query_embedding=query_embedding,
         user_id=user_id,
@@ -63,6 +64,7 @@ async def chat_query(
 
     async def stream_generator():
         try:
+            # The UI receives the generated title immediately to update the sidebar
             meta_payload = {
                 'type': 'meta',
                 'session_id': session_id,
@@ -110,7 +112,6 @@ async def chat_query(
             error_text = f"An error occurred: {str(err)}"
             yield f"data: {json.dumps({'type': 'token', 'content': error_text, 'session_id': session_id})}\n\n"
         finally:
-            # Guarantees the frontend receives [DONE] even if an error occurs mid-stream
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")

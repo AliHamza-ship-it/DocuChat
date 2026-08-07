@@ -121,21 +121,52 @@ class RAGGenerator:
             logger.error(f"OpenRouter Streaming API error: {str(e)}")
             yield f"\n\n[Error generating answer: {str(e)}]"
 
-    def generate_chat_title(self, first_query: str) -> str:
+    def generate_chat_title(self, query: str) -> str:
+        """
+        Uses a strict Few-Shot prompt to guarantee a clean 3-5 word title based on the user's query.
+        """
         try:
-            prompt = f"Summarize the following query into a concise 3-4 word chat title. Return ONLY the title text without quotes or preamble.\n\nQuery: {first_query}"
-            response = self.client.chat.completions.create(
+            # Truncate to prevent long queries from breaking the instruction
+            short_query = query[:400].strip()
+            
+            prompt = (
+                "You are an AI title generator. Extract the core subject of the user's query into a short 3 to 5 word title.\n"
+                "Output ONLY the title words. No conversational text, no quotes, no 'Title:'.\n\n"
+                "Example 1:\n"
+                "Query: Explain how LiGas batteries work in extreme cold conditions.\n"
+                "Title: LiGas Batteries In Cold\n\n"
+                "Example 2:\n"
+                "Query: Who is the current director of the STEM education department?\n"
+                "Title: STEM Education Department Director\n\n"
+                f"Query: {short_query}\n"
+                "Title:"
+            )
+            
+            completion = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=15,
-                timeout=10.0
+                temperature=0.1,  # Low temperature for strict compliance
+                max_tokens=10,
+                timeout=8.0
             )
-            raw_title = response.choices[0].message.content or ""
-            title = self._clean_response(raw_title).strip()
-            return title if title else "New Conversation"
-        except Exception:
-            words = first_query.split()[:4]
+            
+            raw_title = completion.choices[0].message.content or ""
+            
+            # Post-process to remove unwanted artifacts like "Title:" or quotes
+            title = re.sub(r'^(title:|chat title:|\"|\')', '', raw_title, flags=re.IGNORECASE).strip()
+            title = re.sub(r'(\"|\')$', '', title).strip()
+            
+            # Fallback constraint if the LLM hallucinates a long sentence anyway
+            words = title.split()
+            if not title or len(words) > 7:
+                words = short_query.split()[:4]
+                return " ".join(words).title()
+                
+            return title.title()
+            
+        except Exception as e:
+            logger.error(f"Title generation failed: {str(e)}")
+            words = query.split()[:4]
             return " ".join(words).title() if words else "New Conversation"
 
 rag_generator = RAGGenerator()

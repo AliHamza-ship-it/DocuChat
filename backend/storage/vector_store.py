@@ -3,7 +3,7 @@ import json
 import logging
 import numpy as np
 import faiss
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 from supabase import Client
 from backend.database.supabase_client import get_supabase_client
 from backend.core.config import settings
@@ -30,8 +30,6 @@ class VectorStoreManager:
         metadatas: List[Dict[str, Any]]
     ) -> bool:
         """Stores chunk embeddings into Supabase pgvector with local FAISS backup."""
-        # 1. Attempt Supabase Insertion
-        supabase_success = False
         try:
             supabase = self._get_supabase()
             records = []
@@ -44,16 +42,13 @@ class VectorStoreManager:
                     "embedding": emb
                 })
             
-            # Batch insert in chunks of 100
             batch_size = 100
             for i in range(0, len(records), batch_size):
                 supabase.table("document_chunks").insert(records[i:i + batch_size]).execute()
-            supabase_success = True
             logger.info(f"Successfully stored {len(chunks)} chunks in Supabase pgvector.")
         except Exception as e:
             logger.warning(f"Supabase storage failed ({str(e)}). Falling back to FAISS backup index.")
 
-        # 2. Sync to local FAISS Index as fallback/backup
         self._store_faiss(document_id, user_id, chunks, embeddings, metadatas)
         return True
 
@@ -67,7 +62,6 @@ class VectorStoreManager:
         """Performs vector search in Supabase; falls back to FAISS if primary search fails."""
         try:
             supabase = self._get_supabase()
-            # Invoke Supabase match_documents SQL function
             response = supabase.rpc("match_documents", {
                 "query_embedding": query_embedding,
                 "match_threshold": threshold,
@@ -81,7 +75,6 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"Supabase pgvector query failed ({str(e)}). Executing local FAISS fallback.")
 
-        # Execute FAISS Fallback Search
         return self._search_faiss(query_embedding, user_id, top_k, threshold)
 
     def _store_faiss(
@@ -94,7 +87,6 @@ class VectorStoreManager:
     ):
         """Indexes vector chunks into a local FAISS index file."""
         embeddings_np = np.array(embeddings, dtype=np.float32)
-        # Normalize vectors for cosine similarity
         faiss.normalize_L2(embeddings_np)
 
         if os.path.exists(self.faiss_file_path):
@@ -128,7 +120,7 @@ class VectorStoreManager:
         top_k: int = 8,
         threshold: float = 0.15
     ) -> List[Dict[str, Any]]:
-        """Searches vector embeddings in the local FAISS index."""
+        """Searches vector embeddings in local FAISS index."""
         if not os.path.exists(self.faiss_file_path) or not os.path.exists(self.meta_file_path):
             return []
 
@@ -146,7 +138,6 @@ class VectorStoreManager:
             if idx < 0 or idx >= len(metadata_store):
                 continue
             item = metadata_store[idx]
-            # Verify user ownership and threshold check
             if item.get("user_id") == user_id and float(similarity) >= threshold:
                 results.append({
                     "id": str(item.get("faiss_id")),

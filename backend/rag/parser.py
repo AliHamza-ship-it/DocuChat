@@ -4,7 +4,7 @@ import io
 from fastapi import HTTPException
 
 def parse_pdf(file_bytes: bytes, filename: str) -> list[dict]:
-    """Extracts text and page numbers from PDF files."""
+    """Extracts text and page numbers from PDF files preserving reading order."""
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
     except Exception as e:
@@ -12,7 +12,6 @@ def parse_pdf(file_bytes: bytes, filename: str) -> list[dict]:
 
     pages = []
     for page_num, page in enumerate(doc):
-        # Added sort=True to preserve logical reading order
         text = page.get_text("text", sort=True).strip()
         if text:
             pages.append({
@@ -28,7 +27,7 @@ def parse_pdf(file_bytes: bytes, filename: str) -> list[dict]:
     return pages
 
 def parse_docx(file_bytes: bytes, filename: str) -> list[dict]:
-    """Extracts text from DOCX files."""
+    """Extracts text from DOCX files preserving paragraph headers."""
     try:
         doc = docx.Document(io.BytesIO(file_bytes))
         full_text = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
