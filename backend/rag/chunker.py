@@ -2,13 +2,17 @@ import re
 
 def is_header_line(line: str) -> bool:
     """Detects structural headers such as 'Week 3', 'Day 4', 'Module 1', '# Heading', etc."""
-    line_clean = line.strip()
+    line_clean = re.sub(
+        r"^[•●▪◦\-\*]\s*",
+        "",
+        line.strip()
+    )
     if not line_clean or len(line_clean) > 80:
         return False
     
     header_patterns = [
         r"^#{1,6}\s+.+",                                           # Markdown headers
-        r"^(?:week|day|module|chapter|unit|section|part)\s+\d+.*",  # Week 1, Day 2, etc.
+        r"^(?:week|day|module|chapter|unit|section|part)\s+\d+\b.*",  # Week 1, Day 2, etc.
         r"^[A-Z0-9\s\-_]{2,50}:$"                                  # Capitalized title ending with colon
     ]
     for pattern in header_patterns:

@@ -1,117 +1,458 @@
-import json
 import asyncio
-from typing import Optional
-from fastapi import APIRouter, Depends
+import json
+import logging
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from backend.auth.supabase_auth import get_current_user
-from backend.schemas.chat import ChatRequest
-from backend.embeddings.vectorizer import embedding_service
-from backend.storage.vector_store import vector_store
-from backend.rag.generator import rag_generator
-from backend.database.supabase_client import supabase
+
+from backend.auth.supabase_auth import (
+    get_current_user
+)
+from backend.database.supabase_client import (
+    supabase
+)
+from backend.rag.generator import (
+    rag_generator
+)
+from backend.rag.srag_engine import (
+    SRAGEngine
+)
+from backend.schemas.chat import (
+    ChatRequest
+)
+
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
+
+srag_engine = SRAGEngine(
+    rag_generator
+)
+
+
+def _user_id(
+    current_user: Any
+) -> str:
+
+    if hasattr(
+        current_user,
+        "id"
+    ):
+        return str(
+            current_user.id
+        )
+
+    if (
+        isinstance(
+            current_user,
+            dict
+        )
+        and current_user.get("id")
+    ):
+        return str(
+            current_user["id"]
+        )
+
+    raise HTTPException(
+        status_code=401,
+        detail=(
+            "Could not resolve "
+            "user identity."
+        )
+    )
+
+
+def _load_conversation(
+    session_id: str,
+    user_id: str,
+    limit: int = 8
+) -> List[Dict[str, str]]:
+
+    if not session_id:
+        return []
+
+    response = (
+        supabase
+        .table("chat_messages")
+        .select(
+            "role, content, created_at"
+        )
+        .eq(
+            "session_id",
+            session_id
+        )
+        .eq(
+            "user_id",
+            user_id
+        )
+        .order(
+            "created_at",
+            desc=True
+        )
+        .limit(limit)
+        .execute()
+    )
+
+    rows = list(
+        reversed(
+            response.data or []
+        )
+    )
+
+    return [
+        {
+            "role": str(
+                row.get(
+                    "role",
+                    "user"
+                )
+            ),
+            "content": str(
+                row.get(
+                    "content",
+                    ""
+                )
+            )
+        }
+
+        for row in rows
+
+        if row.get("content")
+    ]
+
+
+def _chunk_text(
+    text: str,
+    size: int = 80
+):
+
+    """
+    Streams an already validated answer.
+
+    SRAG intentionally validates the complete answer
+    before the frontend receives it.
+    """
+
+    text = text or ""
+
+    for start in range(
+        0,
+        len(text),
+        size
+    ):
+
+        yield text[
+            start:start + size
+        ]
+
 
 @router.post("/query")
 async def chat_query(
     request: ChatRequest,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(
+        get_current_user
+    )
 ):
-    query_text = request.query.strip()
-    session_id = getattr(request, 'session_id', None)
-    user_id = current_user.id
 
-    is_new_session = False
-    if not session_id:
-        is_new_session = True
-        # Generate the smart title immediately using the user's query
-        title = rag_generator.generate_chat_title(query_text)
-        
-        session_res = supabase.table("chat_sessions").insert({
-            "user_id": user_id,
-            "title": title
-        }).execute()
-        
-        session_id = session_res.data[0]["id"]
-    else:
-        title = None
-
-    supabase.table("chat_messages").insert({
-        "session_id": session_id,
-        "user_id": user_id,
-        "role": "user",
-        "content": query_text
-    }).execute()
-
-    query_embedding = embedding_service.generate_embedding(query_text)
-    
-    retrieved_chunks = vector_store.search_similar(
-        query_embedding=query_embedding,
-        user_id=user_id,
-        top_k=7,
-        threshold=0.20
+    query_text = (
+        request.query.strip()
     )
 
-    sources = [
-        {
-            "document_id": str(c.get("document_id", "")),
-            "content": c.get("content", ""),
-            "metadata": c.get("metadata", {}),
-            "similarity": float(c.get("similarity", 0.0))
-        }
-        for c in retrieved_chunks
-    ]
+    if not query_text:
 
-    async def stream_generator():
-        try:
-            # The UI receives the generated title immediately to update the sidebar
-            meta_payload = {
-                'type': 'meta',
-                'session_id': session_id,
-                'title': title,
-                'is_new_session': is_new_session,
-                'sources': sources
-            }
-            yield f"data: {json.dumps(meta_payload)}\n\n"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Query cannot be empty."
+            )
+        )
 
-            full_assistant_response = []
+    user_id = _user_id(
+        current_user
+    )
 
-            if hasattr(rag_generator, "stream_grounded_answer"):
-                stream = rag_generator.stream_grounded_answer(query_text, retrieved_chunks)
-            else:
-                stream = rag_generator.generate_grounded_answer(query_text, retrieved_chunks)
+    session_id = (
+        request.session_id
+    )
 
-            if hasattr(stream, "__aiter__"):
-                async for chunk in stream:
-                    if chunk:
-                        full_assistant_response.append(chunk)
-                        yield f"data: {json.dumps({'type': 'token', 'content': chunk, 'session_id': session_id})}\n\n"
-            elif hasattr(stream, "__iter__") and not isinstance(stream, str):
-                for chunk in stream:
-                    if chunk:
-                        full_assistant_response.append(chunk)
-                        yield f"data: {json.dumps({'type': 'token', 'content': chunk, 'session_id': session_id})}\n\n"
-                        await asyncio.sleep(0.005)
-            else:
-                chunk = str(stream)
-                full_assistant_response.append(chunk)
-                yield f"data: {json.dumps({'type': 'token', 'content': chunk, 'session_id': session_id})}\n\n"
+    title = None
 
-            complete_text = "".join(full_assistant_response)
-            supabase.table("chat_messages").insert({
+    is_new_session = False
+
+    # =========================================================
+    # SESSION
+    # =========================================================
+
+    if session_id:
+
+        # IMPORTANT:
+        # Verify the session belongs to this user.
+        session_check = (
+            supabase
+            .table("chat_sessions")
+            .select("id")
+            .eq(
+                "id",
+                session_id
+            )
+            .eq(
+                "user_id",
+                user_id
+            )
+            .limit(1)
+            .execute()
+        )
+
+        if not session_check.data:
+
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Chat session not found."
+                )
+            )
+
+    else:
+
+        is_new_session = True
+
+        title = (
+            rag_generator
+            .generate_chat_title(
+                query_text
+            )
+        )
+
+        session_res = (
+            supabase
+            .table("chat_sessions")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "title": title
+                }
+            )
+            .execute()
+        )
+
+        if not session_res.data:
+
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Failed to create "
+                    "chat session."
+                )
+            )
+
+        session_id = (
+            session_res
+            .data[0]["id"]
+        )
+
+    # =========================================================
+    # CONVERSATION HISTORY
+    # =========================================================
+
+    conversation = (
+        _load_conversation(
+            session_id,
+            user_id,
+            limit=8
+        )
+    )
+
+    # =========================================================
+    # SAVE USER MESSAGE
+    # =========================================================
+
+    (
+        supabase
+        .table("chat_messages")
+        .insert(
+            {
                 "session_id": session_id,
                 "user_id": user_id,
-                "role": "assistant",
-                "content": complete_text,
-                "sources": sources
-            }).execute()
+                "role": "user",
+                "content": query_text
+            }
+        )
+        .execute()
+    )
 
-            supabase.table("chat_sessions").update({"updated_at": "now()"}).eq("id", session_id).execute()
+    # =========================================================
+    # SRAG STREAM
+    # =========================================================
+
+    async def stream_generator():
+
+        try:
+
+            # Run the SRAG pipeline off the async event loop.
+            #
+            # This allows the FastAPI server to continue
+            # handling other requests while the LLM/retrieval
+            # pipeline runs.
+
+            result = await asyncio.to_thread(
+
+                srag_engine.answer,
+
+                query_text,
+
+                user_id,
+
+                conversation
+            )
+
+            # -------------------------------------------------
+            # META EVENT
+            # -------------------------------------------------
+
+            meta_payload = {
+
+                "type": "meta",
+
+                "session_id": session_id,
+
+                "title": title,
+
+                "is_new_session":
+                    is_new_session,
+
+                "sources":
+                    result.sources,
+
+                "srag": {
+
+                    "status":
+                        result.status,
+
+                    "retrieval_attempts":
+                        result.retrieval_attempts,
+
+                    "rewrite_attempts":
+                        result.rewrite_attempts,
+
+                    "support_revisions":
+                        result.support_revisions,
+
+                    "retrieval_query":
+                        result.retrieval_query
+                }
+            }
+
+            yield (
+                "data: "
+                f"{json.dumps(meta_payload)}"
+                "\n\n"
+            )
+
+            # -------------------------------------------------
+            # FINAL VALIDATED ANSWER
+            # -------------------------------------------------
+
+            full_response = (
+                result.answer
+            )
+
+            for chunk in _chunk_text(
+                full_response
+            ):
+
+                yield (
+                    "data: "
+                    f"{json.dumps({
+                        'type': 'token',
+                        'content': chunk,
+                        'session_id': session_id
+                    })}"
+                    "\n\n"
+                )
+
+                await asyncio.sleep(
+                    0.005
+                )
+
+            # -------------------------------------------------
+            # SAVE ASSISTANT RESPONSE
+            # -------------------------------------------------
+
+            (
+                supabase
+                .table("chat_messages")
+                .insert(
+                    {
+                        "session_id":
+                            session_id,
+
+                        "user_id":
+                            user_id,
+
+                        "role":
+                            "assistant",
+
+                        "content":
+                            full_response,
+
+                        "sources":
+                            result.sources
+                    }
+                )
+                .execute()
+            )
+
+            (
+                supabase
+                .table("chat_sessions")
+                .update(
+                    {
+                        "updated_at":
+                            "now()"
+                    }
+                )
+                .eq(
+                    "id",
+                    session_id
+                )
+                .eq(
+                    "user_id",
+                    user_id
+                )
+                .execute()
+            )
 
         except Exception as err:
-            error_text = f"An error occurred: {str(err)}"
-            yield f"data: {json.dumps({'type': 'token', 'content': error_text, 'session_id': session_id})}\n\n"
-        finally:
-            yield "data: [DONE]\n\n"
 
-    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+            logger.exception(
+                "SRAG chat request failed"
+            )
+
+            error_text = (
+                "An error occurred while "
+                "processing your question. "
+                "Please try again."
+            )
+
+            yield (
+                "data: "
+                f"{json.dumps({
+                    'type': 'token',
+                    'content': error_text,
+                    'session_id': session_id
+                })}"
+                "\n\n"
+            )
+
+        finally:
+
+            yield (
+                "data: [DONE]\n\n"
+            )
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream"
+    )

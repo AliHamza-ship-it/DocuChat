@@ -3,6 +3,7 @@ supabase
 openai
 sentence-transformers
 pydantic
+pydantic-settings
 PyMuPDF
 python-docx
 faiss-cpu

@@ -56,6 +56,59 @@ class RAGGenerator:
             )
         return "\n\n----------------------------------------\n\n".join(formatted_parts)
 
+    def _complete(
+        self,
+        user_content: str,
+        system_prompt: str,
+        max_tokens: int = 1800,
+    ) -> str:
+        """
+        Non-streaming completion used by the SRAG pipeline.
+
+        SRAG must validate an answer before the frontend receives it,
+        so this part intentionally runs non-streaming.
+        """
+
+        try:
+
+            response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=[
+                {
+                "role": "system",
+                "content": system_prompt
+                },
+                {
+                "role": "user",
+                "content": user_content
+                }
+            ],
+                temperature=0.0,
+                frequency_penalty=0.0,
+                max_tokens=max_tokens,
+                timeout=45.0,
+            )
+
+            raw_content = (
+                response
+                .choices[0]
+                .message
+                .content
+                or ""
+            )
+
+            return self._clean_response(
+                raw_content
+            )
+
+        except Exception as e:
+
+            logger.error(
+                f"OpenRouter completion error: {str(e)}"
+            )
+
+            raise
+
     def generate_grounded_answer(self, query: str, context_chunks: list[dict]) -> str:
         context_block = self._format_context(context_chunks)
         system_prompt = SYSTEM_RAG_PROMPT.format(context_block=context_block)
