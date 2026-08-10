@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from openai import OpenAI
 from backend.core.config import settings
@@ -9,14 +10,17 @@ logger = logging.getLogger(__name__)
 class RAGGenerator:
     def __init__(self):
         self.client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=settings.OPENROUTER_API_KEY,
-            default_headers={
-                "HTTP-Referer": "http://localhost:3000",
-                "X-Title": "DocuChat",
-            }
+            api_key=os.getenv("GEMINI_API_KEY"),
+            base_url=(
+                "https://generativelanguage.googleapis.com/"
+                "v1beta/openai/"
+            ),
         )
-        self.model_name = "nvidia/nemotron-3-super-120b-a12b:free"
+
+        self.model_name = os.getenv(
+            "GEMINI_MODEL",
+            "gemini-3.1-flash-lite",
+        )
 
     def _clean_response(self, text: str) -> str:
         if not text:
@@ -63,37 +67,33 @@ class RAGGenerator:
         max_tokens: int = 1800,
     ) -> str:
         """
-        Non-streaming completion used by the SRAG pipeline.
+        Non-streaming completion used by SRAG.
 
-        SRAG must validate an answer before the frontend receives it,
-        so this part intentionally runs non-streaming.
+        The SRAG pipeline needs a complete answer before
+        validation, therefore this method intentionally
+        does not stream.
         """
 
         try:
 
             response = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=[
-                {
-                "role": "system",
-                "content": system_prompt
-                },
-                {
-                "role": "user",
-                "content": user_content
-                }
-            ],
+                model=self.model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": user_content,
+                    },
+                ],
                 temperature=0.0,
-                frequency_penalty=0.0,
                 max_tokens=max_tokens,
-                timeout=45.0,
             )
 
             raw_content = (
-                response
-                .choices[0]
-                .message
-                .content
+                response.choices[0].message.content
                 or ""
             )
 
@@ -101,10 +101,11 @@ class RAGGenerator:
                 raw_content
             )
 
-        except Exception as e:
+        except Exception as exc:
 
             logger.error(
-                f"OpenRouter completion error: {str(e)}"
+                "Gemini completion error: %s",
+                exc,
             )
 
             raise

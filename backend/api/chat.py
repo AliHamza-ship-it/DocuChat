@@ -1,151 +1,42 @@
-import asyncio
 import json
-import logging
-from typing import Any, Dict, List
+import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import (
+    APIRouter,
+    Depends
+)
+
+from fastapi.responses import (
+    StreamingResponse
+)
 
 from backend.auth.supabase_auth import (
     get_current_user
 )
-from backend.database.supabase_client import (
-    supabase
+
+from backend.schemas.chat import (
+    ChatRequest
 )
+
 from backend.rag.generator import (
     rag_generator
 )
-from backend.rag.srag_engine import (
+
+from backend.rag.srag import (
     SRAGEngine
 )
-from backend.schemas.chat import (
-    ChatRequest
+
+from backend.database.supabase_client import (
+    supabase
 )
 
 
 router = APIRouter()
 
-logger = logging.getLogger(__name__)
 
 srag_engine = SRAGEngine(
     rag_generator
 )
-
-
-def _user_id(
-    current_user: Any
-) -> str:
-
-    if hasattr(
-        current_user,
-        "id"
-    ):
-        return str(
-            current_user.id
-        )
-
-    if (
-        isinstance(
-            current_user,
-            dict
-        )
-        and current_user.get("id")
-    ):
-        return str(
-            current_user["id"]
-        )
-
-    raise HTTPException(
-        status_code=401,
-        detail=(
-            "Could not resolve "
-            "user identity."
-        )
-    )
-
-
-def _load_conversation(
-    session_id: str,
-    user_id: str,
-    limit: int = 8
-) -> List[Dict[str, str]]:
-
-    if not session_id:
-        return []
-
-    response = (
-        supabase
-        .table("chat_messages")
-        .select(
-            "role, content, created_at"
-        )
-        .eq(
-            "session_id",
-            session_id
-        )
-        .eq(
-            "user_id",
-            user_id
-        )
-        .order(
-            "created_at",
-            desc=True
-        )
-        .limit(limit)
-        .execute()
-    )
-
-    rows = list(
-        reversed(
-            response.data or []
-        )
-    )
-
-    return [
-        {
-            "role": str(
-                row.get(
-                    "role",
-                    "user"
-                )
-            ),
-            "content": str(
-                row.get(
-                    "content",
-                    ""
-                )
-            )
-        }
-
-        for row in rows
-
-        if row.get("content")
-    ]
-
-
-def _chunk_text(
-    text: str,
-    size: int = 80
-):
-
-    """
-    Streams an already validated answer.
-
-    SRAG intentionally validates the complete answer
-    before the frontend receives it.
-    """
-
-    text = text or ""
-
-    for start in range(
-        0,
-        len(text),
-        size
-    ):
-
-        yield text[
-            start:start + size
-        ]
 
 
 @router.post("/query")
@@ -160,61 +51,19 @@ async def chat_query(
         request.query.strip()
     )
 
-    if not query_text:
+    user_id = current_user.id
 
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Query cannot be empty."
-            )
-        )
-
-    user_id = _user_id(
-        current_user
+    session_id = getattr(
+        request,
+        "session_id",
+        None
     )
-
-    session_id = (
-        request.session_id
-    )
-
-    title = None
 
     is_new_session = False
 
-    # =========================================================
-    # SESSION
-    # =========================================================
+    title = None
 
-    if session_id:
-
-        # IMPORTANT:
-        # Verify the session belongs to this user.
-        session_check = (
-            supabase
-            .table("chat_sessions")
-            .select("id")
-            .eq(
-                "id",
-                session_id
-            )
-            .eq(
-                "user_id",
-                user_id
-            )
-            .limit(1)
-            .execute()
-        )
-
-        if not session_check.data:
-
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    "Chat session not found."
-                )
-            )
-
-    else:
+    if not session_id:
 
         is_new_session = True
 
@@ -228,24 +77,14 @@ async def chat_query(
         session_res = (
             supabase
             .table("chat_sessions")
-            .insert(
-                {
-                    "user_id": user_id,
-                    "title": title
-                }
-            )
+            .insert({
+                "user_id":
+                    user_id,
+                "title":
+                    title
+            })
             .execute()
         )
-
-        if not session_res.data:
-
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Failed to create "
-                    "chat session."
-                )
-            )
 
         session_id = (
             session_res
@@ -253,82 +92,131 @@ async def chat_query(
         )
 
     # =========================================================
-    # CONVERSATION HISTORY
+    # LOAD PREVIOUS CONVERSATION BEFORE SAVING THIS QUESTION
+    # =========================================================
+    # This is required for contextual follow-ups such as:
+    #   Q1: What is in Week 5 Day 2?
+    #   Q2: What is after that?
+    # The current question must NOT be included in the history
+    # passed to SRAG.
     # =========================================================
 
-    conversation = (
-        _load_conversation(
+    conversation = []
+
+    if session_id:
+        try:
+            history_res = (
+                supabase
+                .table("chat_messages")
+                .select("*")
+                .eq("session_id", session_id)
+                .eq("user_id", user_id)
+                .limit(20)
+                .execute()
+            )
+
+            history_rows = list(
+                history_res.data or []
+            )
+
+            # If the table exposes created_at, use it for deterministic
+            # chronological ordering. Otherwise preserve the database
+            # response order.
+            if any(
+                row.get("created_at")
+                for row in history_rows
+                if isinstance(row, dict)
+            ):
+                history_rows.sort(
+                    key=lambda row: str(
+                        row.get("created_at", "")
+                    )
+                )
+
+            for row in history_rows:
+                if not isinstance(row, dict):
+                    continue
+
+                role = str(
+                    row.get("role", "")
+                ).strip().lower()
+
+                content = str(
+                    row.get("content", "")
+                ).strip()
+
+                if role in {"user", "assistant"} and content:
+                    conversation.append({
+                        "role": role,
+                        "content": content
+                    })
+
+            # Keep only the most recent turns so context remains bounded.
+            conversation = conversation[-12:]
+
+        except Exception as history_error:
+            # Do not break normal direct questions if history loading fails.
+            # Contextual follow-ups will simply have no history to resolve.
+            conversation = []
+
+    # =========================================================
+    # SAVE CURRENT USER MESSAGE
+    # =========================================================
+
+    supabase.table(
+        "chat_messages"
+    ).insert({
+
+        "session_id":
             session_id,
+
+        "user_id":
             user_id,
-            limit=8
-        )
-    )
 
-    # =========================================================
-    # SAVE USER MESSAGE
-    # =========================================================
+        "role":
+            "user",
 
-    (
-        supabase
-        .table("chat_messages")
-        .insert(
-            {
-                "session_id": session_id,
-                "user_id": user_id,
-                "role": "user",
-                "content": query_text
-            }
-        )
-        .execute()
-    )
+        "content":
+            query_text
 
-    # =========================================================
-    # SRAG STREAM
-    # =========================================================
+    }).execute()
 
     async def stream_generator():
 
         try:
 
-            # Run the SRAG pipeline off the async event loop.
-            #
-            # This allows the FastAPI server to continue
-            # handling other requests while the LLM/retrieval
-            # pipeline runs.
-
             result = await asyncio.to_thread(
-
                 srag_engine.answer,
-
                 query_text,
-
                 user_id,
-
                 conversation
             )
 
-            # -------------------------------------------------
-            # META EVENT
-            # -------------------------------------------------
+            sources = (
+                result.sources
+            )
 
-            meta_payload = {
+            yield (
+                "data: "
+                +
+                json.dumps({
+                    "type":
+                        "meta",
 
-                "type": "meta",
+                    "session_id":
+                        session_id,
 
-                "session_id": session_id,
+                    "title":
+                        title,
 
-                "title": title,
+                    "is_new_session":
+                        is_new_session,
 
-                "is_new_session":
-                    is_new_session,
+                    "sources":
+                        sources,
 
-                "sources":
-                    result.sources,
-
-                "srag": {
-
-                    "status":
-                        result.status,
+                    "retrieval_query":
+                        result.retrieval_query,
 
                     "retrieval_attempts":
                         result.retrieval_attempts,
@@ -336,39 +224,44 @@ async def chat_query(
                     "rewrite_attempts":
                         result.rewrite_attempts,
 
-                    "support_revisions":
-                        result.support_revisions,
+                    "status":
+                        result.status
 
-                    "retrieval_query":
-                        result.retrieval_query
-                }
-            }
-
-            yield (
-                "data: "
-                f"{json.dumps(meta_payload)}"
+                })
+                +
                 "\n\n"
             )
 
-            # -------------------------------------------------
-            # FINAL VALIDATED ANSWER
-            # -------------------------------------------------
-
-            full_response = (
+            answer = (
                 result.answer
             )
 
-            for chunk in _chunk_text(
-                full_response
+            # Stream the already validated
+            # final answer to the frontend.
+            for i in range(
+                0,
+                len(answer),
+                40
             ):
+
+                piece = answer[
+                    i:i + 40
+                ]
 
                 yield (
                     "data: "
-                    f"{json.dumps({
-                        'type': 'token',
-                        'content': chunk,
-                        'session_id': session_id
-                    })}"
+                    +
+                    json.dumps({
+                        "type":
+                            "token",
+
+                        "content":
+                            piece,
+
+                        "session_id":
+                            session_id
+                    })
+                    +
                     "\n\n"
                 )
 
@@ -376,73 +269,58 @@ async def chat_query(
                     0.005
                 )
 
-            # -------------------------------------------------
-            # SAVE ASSISTANT RESPONSE
-            # -------------------------------------------------
+            supabase.table(
+                "chat_messages"
+            ).insert({
 
-            (
-                supabase
-                .table("chat_messages")
-                .insert(
-                    {
-                        "session_id":
-                            session_id,
+                "session_id":
+                    session_id,
 
-                        "user_id":
-                            user_id,
+                "user_id":
+                    user_id,
 
-                        "role":
-                            "assistant",
+                "role":
+                    "assistant",
 
-                        "content":
-                            full_response,
+                "content":
+                    answer,
 
-                        "sources":
-                            result.sources
-                    }
-                )
-                .execute()
-            )
+                "sources":
+                    sources
 
-            (
-                supabase
-                .table("chat_sessions")
-                .update(
-                    {
-                        "updated_at":
-                            "now()"
-                    }
-                )
-                .eq(
-                    "id",
-                    session_id
-                )
-                .eq(
-                    "user_id",
-                    user_id
-                )
-                .execute()
-            )
+            }).execute()
+
+            supabase.table(
+                "chat_sessions"
+            ).update({
+                "updated_at":
+                    "now()"
+            }).eq(
+                "id",
+                session_id
+            ).execute()
 
         except Exception as err:
 
-            logger.exception(
-                "SRAG chat request failed"
-            )
-
             error_text = (
-                "An error occurred while "
-                "processing your question. "
-                "Please try again."
+                "An error occurred: "
+                f"{str(err)}"
             )
 
             yield (
                 "data: "
-                f"{json.dumps({
-                    'type': 'token',
-                    'content': error_text,
-                    'session_id': session_id
-                })}"
+                +
+                json.dumps({
+                    "type":
+                        "token",
+
+                    "content":
+                        error_text,
+
+                    "session_id":
+                        session_id
+                })
+                +
                 "\n\n"
             )
 
@@ -454,5 +332,6 @@ async def chat_query(
 
     return StreamingResponse(
         stream_generator(),
-        media_type="text/event-stream"
+        media_type=
+            "text/event-stream"
     )

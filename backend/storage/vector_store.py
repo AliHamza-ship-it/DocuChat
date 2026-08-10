@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 import numpy as np
 import faiss
@@ -52,108 +52,139 @@ class VectorStoreManager:
         return get_supabase_client()
 
     # =========================================================
-    # TEXT NORMALIZATION
+    # TEXT HELPERS
     # =========================================================
 
     @staticmethod
     def _normalize_text(
-        text: Any
+        value: Any
     ) -> str:
+
+        if value is None:
+            return ""
 
         return re.sub(
             r"[^a-z0-9\s]",
             " ",
-            str(text).lower()
+            str(value).lower()
         ).strip()
 
-    # =========================================================
-    # WEEK / DAY EXTRACTION
-    # =========================================================
-
     @staticmethod
-    def _extract_week_day(
-        query: str
-    ):
+    def _tokens(
+        value: Any
+    ) -> set:
 
         normalized = (
             VectorStoreManager
-            ._normalize_text(query)
+            ._normalize_text(value)
         )
 
-        week_match = re.search(
-            r"\bweek\s+(\d+)\b",
-            normalized
+        return set(
+            normalized.split()
         )
-
-        day_match = re.search(
-            r"\bday\s+(\d+)\b",
-            normalized
-        )
-
-        week = (
-            int(week_match.group(1))
-            if week_match
-            else None
-        )
-
-        day = (
-            int(day_match.group(1))
-            if day_match
-            else None
-        )
-
-        return week, day
-
-    # =========================================================
-    # STRUCTURED METADATA MATCH
-    # =========================================================
 
     @staticmethod
-    def _get_item_metadata(
+    def _metadata(
         item: Dict[str, Any]
     ) -> Dict[str, Any]:
 
-        metadata = (
-            item.get("metadata")
-            or {}
+        metadata = item.get(
+            "metadata",
+            {}
         )
 
         if not isinstance(
             metadata,
             dict
         ):
-            metadata = {}
+            return {}
 
         return metadata
 
+    # =========================================================
+    # STRUCTURED QUERY CONSTRAINTS
+    # =========================================================
+
+    @staticmethod
+    def _extract_constraints(
+        query: str
+    ) -> Dict[str, str]:
+
+        normalized = (
+            VectorStoreManager
+            ._normalize_text(query)
+        )
+
+        constraints = {}
+
+        patterns = {
+
+            "week":
+                r"\bweek\s+(\d+)\b",
+
+            "day":
+                r"\bday\s+(\d+)\b",
+
+            "chapter":
+                r"\bchapter\s+(\d+)\b",
+
+            "section":
+                r"\bsection\s+(\d+)\b",
+
+            "module":
+                r"\bmodule\s+(\d+)\b",
+
+            "unit":
+                r"\bunit\s+(\d+)\b",
+
+            "part":
+                r"\bpart\s+(\d+)\b",
+        }
+
+        for key, pattern in patterns.items():
+
+            match = re.search(
+                pattern,
+                normalized,
+                re.IGNORECASE
+            )
+
+            if match:
+
+                constraints[key] = (
+                    match.group(1)
+                )
+
+        return constraints
+
+    # =========================================================
+    # HIERARCHY MATCH
+    # =========================================================
+
     @classmethod
-    def _structured_match(
+    def _hierarchy_match(
         cls,
         query: str,
         item: Dict[str, Any]
     ) -> Dict[str, Any]:
 
-        week, day = cls._extract_week_day(
-            query
+        constraints = (
+            cls._extract_constraints(
+                query
+            )
         )
 
-        if week is None and day is None:
+        if not constraints:
 
             return {
-                "week_match": False,
-                "day_match": False,
-                "exact_match": False
+                "has_constraint": False,
+                "matched": False,
+                "score": 0.0,
+                "matches": {}
             }
 
-        metadata = cls._get_item_metadata(
+        metadata = cls._metadata(
             item
-        )
-
-        content = cls._normalize_text(
-            item.get(
-                "content",
-                ""
-            )
         )
 
         breadcrumbs = cls._normalize_text(
@@ -163,216 +194,230 @@ class VectorStoreManager:
             )
         )
 
-        combined = (
-            content
-            + " "
-            + breadcrumbs
+        content = cls._normalize_text(
+            item.get(
+                "content",
+                ""
+            )
         )
 
-        metadata_week = metadata.get(
-            "week"
-        )
+        matches = {}
 
-        metadata_day = metadata.get(
-            "day"
-        )
+        for key, value in (
+            constraints.items()
+        ):
 
-        # -----------------------------------------------------
-        # Metadata is preferred.
-        # -----------------------------------------------------
-
-        week_match = False
-        day_match = False
-
-        if week is not None:
+            metadata_value = metadata.get(
+                key
+            )
 
             if (
-                metadata_week is not None
-                and str(metadata_week) == str(week)
+                metadata_value is not None
+                and str(metadata_value)
+                == str(value)
             ):
 
-                week_match = True
+                matches[key] = True
+                continue
 
-            elif re.search(
-                rf"\bweek\s+{week}\b",
+            pattern = (
+                rf"\b{key}\s+{re.escape(value)}\b"
+            )
+
+            if re.search(
+                pattern,
                 breadcrumbs,
                 re.IGNORECASE
             ):
 
-                week_match = True
+                matches[key] = True
+                continue
 
-            elif re.search(
-                rf"\bweek\s+{week}\b",
+            if re.search(
+                pattern,
                 content,
                 re.IGNORECASE
             ):
 
-                week_match = True
+                matches[key] = True
+                continue
 
-        if day is not None:
+            matches[key] = False
 
-            if (
-                metadata_day is not None
-                and str(metadata_day) == str(day)
-            ):
+        matched_count = sum(
+            1
+            for value in matches.values()
+            if value
+        )
 
-                day_match = True
+        total_count = len(
+            constraints
+        )
 
-            elif re.search(
-                rf"\bday\s+{day}\b",
-                breadcrumbs,
-                re.IGNORECASE
-            ):
-
-                day_match = True
-
-            elif re.search(
-                rf"\bday\s+{day}\b",
-                content,
-                re.IGNORECASE
-            ):
-
-                day_match = True
-
-        exact_match = (
-            (
-                week is None
-                or week_match
-            )
-            and
-            (
-                day is None
-                or day_match
-            )
+        score = (
+            matched_count / total_count
+            if total_count
+            else 0.0
         )
 
         return {
-            "week_match": week_match,
-            "day_match": day_match,
-            "exact_match": exact_match
+            "has_constraint": True,
+            "matched": (
+                matched_count
+                == total_count
+            ),
+            "score": score,
+            "matches": matches
         }
 
     # =========================================================
-    # HYBRID SCORE
+    # LEXICAL SCORE
     # =========================================================
 
     @classmethod
-    def _hybrid_score(
+    def _lexical_score(
         cls,
         query: str,
         item: Dict[str, Any]
     ) -> float:
 
-        semantic_score = float(
+        query_tokens = cls._tokens(
+            query
+        )
+
+        if not query_tokens:
+            return 0.0
+
+        content = item.get(
+            "content",
+            ""
+        )
+
+        metadata = cls._metadata(
+            item
+        )
+
+        breadcrumbs = metadata.get(
+            "breadcrumbs",
+            ""
+        )
+
+        content_tokens = cls._tokens(
+            content
+        )
+
+        breadcrumb_tokens = cls._tokens(
+            breadcrumbs
+        )
+
+        content_overlap = (
+            len(
+                query_tokens
+                & content_tokens
+            )
+            / len(query_tokens)
+        )
+
+        breadcrumb_overlap = (
+            len(
+                query_tokens
+                & breadcrumb_tokens
+            )
+            / len(query_tokens)
+        )
+
+        return min(
+            (
+                content_overlap * 0.60
+                +
+                breadcrumb_overlap * 0.40
+            ),
+            1.0
+        )
+
+    # =========================================================
+    # FINAL RERANK SCORE
+    # =========================================================
+
+    @classmethod
+    def _rerank_score(
+        cls,
+        query: str,
+        item: Dict[str, Any]
+    ) -> float:
+
+        semantic = float(
             item.get(
                 "similarity",
                 0.0
             )
         )
 
-        normalized_query = (
-            cls._normalize_text(query)
-        )
-
-        metadata = cls._get_item_metadata(
-            item
-        )
-
-        content = cls._normalize_text(
-            item.get(
-                "content",
-                ""
+        semantic = max(
+            0.0,
+            min(
+                semantic,
+                1.0
             )
         )
 
-        breadcrumbs = cls._normalize_text(
-            metadata.get(
-                "breadcrumbs",
-                ""
-            )
-        )
-
-        query_tokens = set(
-            normalized_query.split()
-        )
-
-        content_tokens = set(
-            content.split()
-        )
-
-        breadcrumb_tokens = set(
-            breadcrumbs.split()
-        )
-
-        if query_tokens:
-
-            content_overlap = (
-                len(
-                    query_tokens
-                    & content_tokens
-                )
-                / len(query_tokens)
-            )
-
-            breadcrumb_overlap = (
-                len(
-                    query_tokens
-                    & breadcrumb_tokens
-                )
-                / len(query_tokens)
-            )
-
-        else:
-
-            content_overlap = 0.0
-            breadcrumb_overlap = 0.0
-
-        score = (
-            semantic_score * 0.55
-            + content_overlap * 0.20
-            + breadcrumb_overlap * 0.25
-        )
-
-        # -----------------------------------------------------
-        # Structured Week / Day matching
-        # -----------------------------------------------------
-
-        structured = (
-            cls._structured_match(
+        lexical = (
+            cls._lexical_score(
                 query,
                 item
             )
         )
 
-        week_match = structured[
-            "week_match"
-        ]
+        hierarchy = (
+            cls._hierarchy_match(
+                query,
+                item
+            )
+        )
 
-        day_match = structured[
-            "day_match"
-        ]
+        hierarchy_score = (
+            hierarchy["score"]
+        )
 
-        exact_match = structured[
-            "exact_match"
-        ]
+        # Base ranking.
+        score = (
+            semantic * 0.60
+            +
+            lexical * 0.20
+            +
+            hierarchy_score * 0.20
+        )
 
-        # Strong boosts.
-        if week_match:
-            score += 0.20
+        # Strong hierarchy protection.
+        #
+        # If the query explicitly specifies a hierarchy
+        # such as Week 3 / Day 4, matching that hierarchy
+        # is more important than a slightly higher semantic
+        # similarity from another part of the document.
 
-        if day_match:
-            score += 0.25
+        if (
+            hierarchy["has_constraint"]
+            and hierarchy["matched"]
+        ):
 
-        if exact_match:
             score += 0.30
 
+        elif (
+            hierarchy["has_constraint"]
+            and hierarchy_score > 0
+        ):
+
+            score += (
+                hierarchy_score * 0.10
+            )
+
         return min(
-            float(score),
+            score,
             1.0
         )
 
     # =========================================================
-    # RERANK
+    # RERANK RESULTS
     # =========================================================
 
     @classmethod
@@ -390,126 +435,75 @@ class VectorStoreManager:
         if not results:
             return []
 
-        week, day = (
-            cls._extract_week_day(
+        hierarchy = (
+            cls._extract_constraints(
                 query
             )
         )
 
-        structured_query = (
-            week is not None
-            or day is not None
-        )
-
-        exact_matches = []
-        week_matches = []
-        normal_matches = []
-
         for item in results:
 
-            structured = (
-                cls._structured_match(
+            item["rerank_score"] = (
+                cls._rerank_score(
                     query,
                     item
                 )
             )
 
-            item["hybrid_score"] = (
-                cls._hybrid_score(
+            item["_hierarchy"] = (
+                cls._hierarchy_match(
                     query,
                     item
                 )
             )
 
-            if (
-                structured_query
-                and structured[
-                    "exact_match"
-                ]
-            ):
-
-                exact_matches.append(
-                    item
-                )
-
-            elif (
-                structured_query
-                and structured[
-                    "week_match"
-                ]
-            ):
-
-                week_matches.append(
-                    item
-                )
-
-            else:
-
-                normal_matches.append(
-                    item
-                )
-
         # -----------------------------------------------------
-        # IMPORTANT:
-        #
-        # If exact Week + Day evidence exists,
-        # do not allow another week's Day to outrank it.
+        # If the question has explicit hierarchy,
+        # matching hierarchy receives priority.
         # -----------------------------------------------------
 
-        if exact_matches:
+        if hierarchy:
 
-            exact_matches.sort(
-                key=lambda x:
-                    x.get(
-                        "hybrid_score",
-                        0.0
-                    ),
-                reverse=True
-            )
-
-            return exact_matches[:top_k]
-
-        # If Week matches exist, prefer them.
-        if week_matches:
-
-            week_matches.sort(
-                key=lambda x:
-                    x.get(
-                        "hybrid_score",
-                        0.0
-                    ),
-                reverse=True
-            )
-
-            normal_matches.sort(
-                key=lambda x:
-                    x.get(
-                        "hybrid_score",
-                        0.0
-                    ),
-                reverse=True
-            )
-
-            return (
-                week_matches
-                + normal_matches
-            )[:top_k]
-
-        # Normal semantic + lexical ranking.
-        all_results = (
-            normal_matches
-        )
-
-        all_results.sort(
-            key=lambda x:
-                x.get(
-                    "hybrid_score",
-                    0.0
+            results.sort(
+                key=lambda item: (
+                    item["_hierarchy"][
+                        "matched"
+                    ],
+                    item["rerank_score"],
+                    float(
+                        item.get(
+                            "similarity",
+                            0.0
+                        )
+                    )
                 ),
-            reverse=True
-        )
+                reverse=True
+            )
 
-        return all_results[:top_k]
+        else:
+
+            results.sort(
+                key=lambda item: (
+                    item["rerank_score"],
+                    float(
+                        item.get(
+                            "similarity",
+                            0.0
+                        )
+                    )
+                ),
+                reverse=True
+            )
+
+        # Remove internal ranking data.
+        for item in results:
+
+            item.pop(
+                "_hierarchy",
+                None
+            )
+
+        return results[:top_k]
 
     # =========================================================
     # STORE CHUNKS
@@ -572,27 +566,30 @@ class VectorStoreManager:
                 batch_size
             ):
 
-                supabase.table(
-                    "document_chunks"
-                ).insert(
-                    records[
-                        i:i + batch_size
-                    ]
-                ).execute()
+                (
+                    supabase
+                    .table(
+                        "document_chunks"
+                    )
+                    .insert(
+                        records[
+                            i:i + batch_size
+                        ]
+                    )
+                    .execute()
+                )
 
             logger.info(
                 "Successfully stored %s "
-                "chunks in Supabase pgvector.",
+                "chunks in Supabase.",
                 len(chunks)
             )
 
-        except Exception as e:
+        except Exception as exc:
 
             logger.warning(
-                "Supabase storage failed "
-                "(%s). Continuing with "
-                "local FAISS backup.",
-                e
+                "Supabase storage failed: %s",
+                exc
             )
 
         self._store_faiss(
@@ -620,11 +617,13 @@ class VectorStoreManager:
         Dict[str, Any]
     ]:
 
-        # Retrieve a large candidate pool first.
+        # Retrieve a larger candidate pool.
         candidate_k = max(
-            top_k * 6,
-            40
+            top_k * 5,
+            30
         )
+
+        results = []
 
         try:
 
@@ -633,7 +632,8 @@ class VectorStoreManager:
             )
 
             response = (
-                supabase.rpc(
+                supabase
+                .rpc(
                     "match_documents",
                     {
                         "query_embedding":
@@ -648,7 +648,8 @@ class VectorStoreManager:
                         "p_user_id":
                             user_id
                     }
-                ).execute()
+                )
+                .execute()
             )
 
             if response.data:
@@ -659,36 +660,42 @@ class VectorStoreManager:
 
                 logger.info(
                     "Retrieved %s "
-                    "candidate vectors "
-                    "from Supabase.",
+                    "Supabase candidates.",
                     len(results)
                 )
 
-                if query_text:
+        except Exception as exc:
 
-                    return self._rerank(
-                        query_text,
-                        results,
-                        top_k
-                    )
-
-                return results[:top_k]
-
-        except Exception as e:
-
-            logger.error(
-                "Supabase pgvector query "
-                "failed (%s). "
-                "Using FAISS fallback.",
-                e
+            logger.warning(
+                "Supabase vector search "
+                "failed: %s",
+                exc
             )
 
-        results = self._search_faiss(
-            query_embedding,
-            user_id,
-            candidate_k,
-            threshold
-        )
+        # -----------------------------------------------------
+        # FAISS fallback
+        # -----------------------------------------------------
+
+        if not results:
+
+            results = (
+                self._search_faiss(
+                    query_embedding,
+                    user_id,
+                    candidate_k,
+                    threshold
+                )
+            )
+
+            logger.info(
+                "Retrieved %s "
+                "FAISS candidates.",
+                len(results)
+            )
+
+        # -----------------------------------------------------
+        # Reranking
+        # -----------------------------------------------------
 
         if query_text:
 
@@ -698,10 +705,20 @@ class VectorStoreManager:
                 top_k
             )
 
+        results.sort(
+            key=lambda item: float(
+                item.get(
+                    "similarity",
+                    0.0
+                )
+            ),
+            reverse=True
+        )
+
         return results[:top_k]
 
     # =========================================================
-    # STORE FAISS
+    # FAISS STORE
     # =========================================================
 
     def _store_faiss(
@@ -721,6 +738,14 @@ class VectorStoreManager:
             embeddings,
             dtype=np.float32
         )
+
+        if (
+            embeddings_np.ndim != 2
+            or
+            len(embeddings_np) == 0
+        ):
+
+            return
 
         faiss.normalize_L2(
             embeddings_np
@@ -814,7 +839,7 @@ class VectorStoreManager:
         self,
         query_embedding: List[float],
         user_id: str,
-        top_k: int = 40,
+        top_k: int = 30,
         threshold: float = 0.10
     ) -> List[
         Dict[str, Any]
@@ -860,7 +885,10 @@ class VectorStoreManager:
         )
 
         search_k = min(
-            max(top_k * 2, 40),
+            max(
+                top_k * 3,
+                30
+            ),
             index.ntotal
         )
 
@@ -888,7 +916,6 @@ class VectorStoreManager:
                     metadata_store
                 )
             ):
-
                 continue
 
             item = (
@@ -896,12 +923,9 @@ class VectorStoreManager:
             )
 
             if (
-                item.get(
-                    "user_id"
-                )
+                item.get("user_id")
                 != user_id
             ):
-
                 continue
 
             similarity = float(
@@ -926,13 +950,15 @@ class VectorStoreManager:
 
                 "content":
                     item.get(
-                        "content"
+                        "content",
+                        ""
                     ),
 
                 "metadata":
                     item.get(
-                        "metadata"
-                    ) or {},
+                        "metadata",
+                        {}
+                    ),
 
                 "similarity":
                     similarity
