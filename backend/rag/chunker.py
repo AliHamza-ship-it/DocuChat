@@ -90,7 +90,6 @@ def _header_type(line: str) -> str | None:
         part
         section
         markdown
-        title
         None
     """
 
@@ -127,16 +126,13 @@ def _header_type(line: str) -> str | None:
     if re.match(r"^#{1,6}\s+.+", line.strip()):
         return "markdown"
 
-    # Short title-like headings.
-    if (
-        re.match(
-            r"^[A-Z0-9][A-Za-z0-9\s&,\-()/]{2,100}:?$",
-            cleaned,
-        )
-        and len(cleaned.split()) <= 14
-    ):
-        return "title"
-
+    # Do not infer plain-text lines such as "Services:",
+    # "Employees:", or bullet items as structural headings.
+    #
+    # PDF extraction usually removes font-size/bold information, so
+    # a generic title heuristic is unsafe. It can classify legitimate
+    # list items such as "Web Development" as headings and create tiny
+    # blocks that were previously discarded.
     return None
 
 
@@ -255,7 +251,7 @@ def _update_hierarchy(
 
         if match:
             number = int(match.group(1))
-            title = match.group(2).strip()
+            title = match.group(2).strip(" \t:-–—")
 
             _reset_lower_hierarchy(
                 hierarchy,
@@ -272,7 +268,7 @@ def _update_hierarchy(
 
         if match:
             number = int(match.group(1))
-            title = match.group(2).strip()
+            title = match.group(2).strip(" \t:-–—")
 
             # Day changes reset sections belonging to the previous day.
             hierarchy["day_number"] = number
@@ -288,7 +284,7 @@ def _update_hierarchy(
 
         if match:
             number = int(match.group(1))
-            title = match.group(2).strip()
+            title = match.group(2).strip(" \t:-–—")
 
             _reset_lower_hierarchy(
                 hierarchy,
@@ -305,7 +301,7 @@ def _update_hierarchy(
 
         if match:
             number = int(match.group(1))
-            title = match.group(2).strip()
+            title = match.group(2).strip(" \t:-–—")
 
             _reset_lower_hierarchy(
                 hierarchy,
@@ -322,7 +318,7 @@ def _update_hierarchy(
 
         if match:
             number = int(match.group(1))
-            title = match.group(2).strip()
+            title = match.group(2).strip(" \t:-–—")
 
             _reset_lower_hierarchy(
                 hierarchy,
@@ -339,7 +335,7 @@ def _update_hierarchy(
 
         if match:
             number = int(match.group(1))
-            title = match.group(2).strip()
+            title = match.group(2).strip(" \t:-–—")
 
             _reset_lower_hierarchy(
                 hierarchy,
@@ -356,7 +352,7 @@ def _update_hierarchy(
 
         if match:
             number = int(match.group(1))
-            title = match.group(2).strip()
+            title = match.group(2).strip(" \t:-–—")
 
             hierarchy["section_number"] = number
             hierarchy["section_title"] = title
@@ -522,6 +518,13 @@ def _hierarchy_metadata(
         "section_title": hierarchy.get(
             "section_title",
             "",
+        ),
+
+        "other_headers": list(
+            hierarchy.get(
+                "other_headers",
+                [],
+            )
         ),
     }
 
@@ -837,7 +840,9 @@ def process_document_to_chunks(
     Important properties:
 
     1. Week/Day hierarchy is tracked line-by-line.
-    2. A Day 2 chunk cannot accidentally receive Day 3 metadata
+    2. Plain-text headings and list items are kept as document content;
+       they are never silently discarded because PDF formatting is lost.
+    3. A Day 2 chunk cannot accidentally receive Day 3 metadata
        simply because Day 3 appeared later on the same page.
     3. Exact hierarchy is stored in metadata.
     4. Hierarchy is also injected into content before embedding.
@@ -848,6 +853,7 @@ def process_document_to_chunks(
     """
 
     final_chunks: list[dict] = []
+    global_chunk_index = 0
 
     # Carry hierarchy across pages because a document section
     # may continue onto the next page without repeating
@@ -929,9 +935,6 @@ def process_document_to_chunks(
 
                 chunk = chunk.strip()
 
-                if len(chunk) < 30:
-                    continue
-
                 # ------------------------------------------------
                 # EMBEDDING CONTENT
                 # ------------------------------------------------
@@ -976,6 +979,12 @@ def process_document_to_chunks(
                 chunk_metadata[
                     "chunk_index"
                 ] = chunk_index
+
+                chunk_metadata[
+                    "global_chunk_index"
+                ] = global_chunk_index
+
+                global_chunk_index += 1
 
                 # Explicit hierarchy key.
                 chunk_metadata[

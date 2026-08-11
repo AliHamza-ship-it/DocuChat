@@ -514,93 +514,170 @@ class VectorStoreManager:
         document_id: str,
         user_id: str,
         chunks: List[str],
-        embeddings: List[
-            List[float]
-        ],
-        metadatas: List[
-            Dict[str, Any]
-        ]
-    ) -> bool:
+        embeddings: List[List[float]],
+        metadatas: List[Dict[str, Any]],
+    ) -> int:
+        """
+        Persist the complete chunk set.
 
-        try:
+        Supabase is the source of truth. FAISS is a local fallback/cache.
+        The previous implementation swallowed Supabase exceptions and
+        returned True, which could report a successful upload even when
+        only a partial/no database index existed.
 
-            supabase = (
-                self._get_supabase()
+        This method validates all parallel arrays, inserts every batch,
+        and raises on any database failure so the upload endpoint can
+        cleanly fail instead of creating a false-success document.
+        """
+        if not chunks:
+            raise ValueError(
+                "No chunks were supplied for storage."
             )
 
-            records = []
+        if not (
+            len(chunks)
+            == len(embeddings)
+            == len(metadatas)
+        ):
+            raise ValueError(
+                "Chunk, embedding, and metadata counts do not match: "
+                f"{len(chunks)}, "
+                f"{len(embeddings)}, "
+                f"{len(metadatas)}."
+            )
 
-            for (
-                chunk_text,
-                emb,
-                meta
-            ) in zip(
+        records = []
+
+        for index, (
+            chunk_text,
+            emb,
+            meta,
+        ) in enumerate(
+            zip(
                 chunks,
                 embeddings,
-                metadatas
-            ):
+                metadatas,
+            )
+        ):
+            clean_text = str(
+                chunk_text or ""
+            ).strip()
 
-                records.append({
+            if not clean_text:
+                raise ValueError(
+                    f"Chunk {index} is empty."
+                )
 
-                    "document_id":
-                        document_id,
+            if not isinstance(meta, dict):
+                meta = {}
 
-                    "user_id":
-                        user_id,
+            if not emb:
+                raise ValueError(
+                    f"Embedding {index} is empty."
+                )
 
-                    "content":
-                        chunk_text,
+            if len(emb) != self.dimension:
+                raise ValueError(
+                    f"Embedding {index} has dimension "
+                    f"{len(emb)}; expected {self.dimension}."
+                )
 
-                    "metadata":
-                        meta,
+            records.append({
+                "document_id": document_id,
+                "user_id": user_id,
+                "content": clean_text,
+                "metadata": meta,
+                "embedding": emb,
+            })
 
-                    "embedding":
-                        emb
-                })
+        supabase = self._get_supabase()
+        batch_size = 100
+        inserted_count = 0
 
-            batch_size = 100
-
+        try:
             for i in range(
                 0,
                 len(records),
-                batch_size
+                batch_size,
             ):
+                batch = records[
+                    i:i + batch_size
+                ]
 
-                (
+                response = (
                     supabase
-                    .table(
-                        "document_chunks"
-                    )
-                    .insert(
-                        records[
-                            i:i + batch_size
-                        ]
-                    )
+                    .table("document_chunks")
+                    .insert(batch)
                     .execute()
                 )
 
-            logger.info(
-                "Successfully stored %s "
-                "chunks in Supabase.",
-                len(chunks)
+                returned_rows = response.data or []
+
+                # Supabase normally returns the inserted rows. If the
+                # server returns a partial result, fail rather than
+                # pretending the complete batch was indexed.
+                if returned_rows and len(returned_rows) != len(batch):
+                    raise RuntimeError(
+                        "Supabase inserted a different number of "
+                        "rows than requested."
+                    )
+
+                inserted_count += len(batch)
+
+            if inserted_count != len(records):
+                raise RuntimeError(
+                    "Stored chunk count does not match input chunk count."
+                )
+
+        except Exception:
+            logger.exception(
+                "Supabase chunk storage failed for document %s. "
+                "Cleaning up partial rows.",
+                document_id,
             )
 
-        except Exception as exc:
+            try:
+                (
+                    supabase
+                    .table("document_chunks")
+                    .delete()
+                    .eq("document_id", document_id)
+                    .eq("user_id", user_id)
+                    .execute()
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to clean partial chunks for document %s.",
+                    document_id,
+                )
 
-            logger.warning(
-                "Supabase storage failed: %s",
-                exc
-            )
+            raise
 
-        self._store_faiss(
+        logger.info(
+            "Successfully stored %s/%s chunks in Supabase for document %s.",
+            inserted_count,
+            len(records),
             document_id,
-            user_id,
-            chunks,
-            embeddings,
-            metadatas
         )
 
-        return True
+        # Keep FAISS available as a fallback. A FAISS failure must not
+        # invalidate a successfully indexed Supabase document.
+        try:
+            self._store_faiss(
+                document_id,
+                user_id,
+                chunks,
+                embeddings,
+                metadatas,
+            )
+        except Exception:
+            logger.exception(
+                "FAISS cache write failed for document %s. "
+                "Supabase remains the source of truth.",
+                document_id,
+            )
+
+        return inserted_count
 
     # =========================================================
     # SEARCH SIMILAR
