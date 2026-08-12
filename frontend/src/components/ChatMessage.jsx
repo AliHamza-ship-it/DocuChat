@@ -3,20 +3,19 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { SourceCard } from './SourceCard';
-import { Bot, User, Layers } from 'lucide-react';
+import { Sparkles, User, Layers } from 'lucide-react';
 
 export const ChatMessage = ({ message }) => {
     const isUser = message.role === 'user';
 
-    // Normalize any <br> or <br/> tags into standard HTML breaks for clean rendering
     const formattedContent = message.content
         ? message.content.replace(/<br\s*\/?>/gi, '<br />')
         : '';
 
     return (
         <div className={`chat-row ${isUser ? 'user-row' : 'assistant-row'}`}>
-            <div className="avatar">
-                {isUser ? <User size={18} /> : <Bot size={18} />}
+            <div className={`avatar ${isUser ? 'user-avatar' : 'assistant-avatar'}`}>
+                {isUser ? <User size={18} /> : <Sparkles size={18} />}
             </div>
             <div className="message-bubble">
                 <div className="message-text">

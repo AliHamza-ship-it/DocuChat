@@ -7,6 +7,7 @@ import api from '../api/client';
 import { Send, Loader2, Sparkles } from 'lucide-react';
 
 export const ChatPage = () => {
+    // ... [Keep ALL your existing state, functions, and hooks exactly as they are] ...
     const [messages, setMessages] = useState([
         {
             role: 'assistant',
@@ -15,40 +16,25 @@ export const ChatPage = () => {
         }
     ]);
     const [inputQuery, setInputQuery] = useState('');
-
-    // Tracks locked generating sessions
     const [generatingSessions, setGeneratingSessions] = useState(new Set());
     const [refreshTrigger, setRefreshTrigger] = useState(0);
-
     const [sessions, setSessions] = useState([]);
-
-    // Default initial new chat gets a unique temp ID so streams don't bleed
     const [activeSessionId, setActiveSessionId] = useState(`new_${Date.now()}`);
 
-    // Refs for safe cross-chat generation and smart scrolling
     const activeSessionRef = useRef(activeSessionId);
     const messagesEndRef = useRef(null);
     const scrollContainerRef = useRef(null);
     const isScrolledToBottom = useRef(true);
 
-    useEffect(() => {
-        activeSessionRef.current = activeSessionId;
-    }, [activeSessionId]);
+    useEffect(() => { activeSessionRef.current = activeSessionId; }, [activeSessionId]);
 
     const fetchSessions = async () => {
-        try {
-            const res = await api.get('/history/sessions');
-            setSessions(res.data);
-        } catch (err) {
-            console.error('Failed to load sessions', err);
-        }
+        try { const res = await api.get('/history/sessions'); setSessions(res.data); }
+        catch (err) { console.error('Failed to load sessions', err); }
     };
 
-    useEffect(() => {
-        fetchSessions();
-    }, []);
+    useEffect(() => { fetchSessions(); }, []);
 
-    // Smart Scroll: Check if user is at the bottom (Increased threshold to 150px)
     const handleScroll = () => {
         if (!scrollContainerRef.current) return;
         const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
@@ -57,7 +43,7 @@ export const ChatPage = () => {
 
     useEffect(() => {
         if (isScrolledToBottom.current) {
-            messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }
     }, [messages]);
 
@@ -70,34 +56,25 @@ export const ChatPage = () => {
                 isScrolledToBottom.current = true;
                 setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'auto' }), 50);
             }
-        } catch (err) {
-            console.error('Failed to load messages', err);
-        }
+        } catch (err) { console.error('Failed to load messages', err); }
     };
 
     const handleNewChat = () => {
-        // Assign a distinct ID to every new chat attempt
         setActiveSessionId(`new_${Date.now()}`);
-        setMessages([
-            {
-                role: 'assistant',
-                content: 'Hello! Upload your company documents on the left panel, and ask me any question. I will provide accurate answers with inline citations.',
-                sources: []
-            }
-        ]);
+        setMessages([{
+            role: 'assistant',
+            content: 'Hello! Upload your company documents on the left panel, and ask me any question. I will provide accurate answers with inline citations.',
+            sources: []
+        }]);
         isScrolledToBottom.current = true;
     };
 
     const handleDeleteSession = async (sessionId) => {
         try {
             await api.delete(`/history/sessions/${sessionId}`);
-            if (activeSessionId === sessionId) {
-                handleNewChat();
-            }
+            if (activeSessionId === sessionId) handleNewChat();
             fetchSessions();
-        } catch (err) {
-            console.error('Failed to delete session', err);
-        }
+        } catch (err) { console.error('Failed to delete session', err); }
     };
 
     const isCurrentLoading = generatingSessions.has(activeSessionId);
@@ -108,12 +85,11 @@ export const ChatPage = () => {
 
         const userQuery = inputQuery.trim();
         setInputQuery('');
-
         isScrolledToBottom.current = true;
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
 
-        // Lock generation for THIS specific frontend view
         const targetViewId = activeSessionId;
+        let currentSessionId = targetViewId;
         setGeneratingSessions(prev => new Set(prev).add(targetViewId));
 
         setMessages((prev) => [
@@ -122,7 +98,6 @@ export const ChatPage = () => {
             { role: 'assistant', content: '', sources: [] }
         ]);
 
-        // If it starts with 'new_', it's not a real DB session yet, pass null to backend
         const backendSessionId = String(targetViewId).startsWith('new_') ? null : targetViewId;
 
         try {
@@ -132,83 +107,60 @@ export const ChatPage = () => {
                 (meta) => {
                     if (meta.is_new_session) {
                         const newDbId = meta.session_id;
-
-                        // Transfer the generation lock to the real database ID
                         setGeneratingSessions(prev => {
                             const next = new Set(prev);
-                            next.delete(targetViewId);
+                            next.delete(currentSessionId);
                             next.add(newDbId);
                             return next;
                         });
-
-                        // ONLY update the active view if the user hasn't clicked away
-                        if (activeSessionRef.current === targetViewId) {
-                            setActiveSessionId(newDbId);
-                        }
+                        currentSessionId = newDbId;
+                        if (activeSessionRef.current === targetViewId) setActiveSessionId(newDbId);
                         fetchSessions();
                     }
                 },
                 (sources, streamSessionId) => {
-                    // Strict Check: Only render if user is on the chat this token belongs to
-                    if (activeSessionRef.current === streamSessionId || activeSessionRef.current === targetViewId) {
+                    if (activeSessionRef.current === streamSessionId || activeSessionRef.current === targetViewId || activeSessionRef.current === currentSessionId) {
                         setMessages((prev) => {
                             if (prev.length === 0) return prev;
                             const lastIdx = prev.length - 1;
                             const lastMsg = prev[lastIdx];
-                            return [
-                                ...prev.slice(0, lastIdx),
-                                { ...lastMsg, sources: sources }
-                            ];
+                            return [...prev.slice(0, lastIdx), { ...lastMsg, sources: sources }];
                         });
                     }
                 },
                 (token, streamSessionId) => {
-                    // Strict Check: Only render if user is on the chat this token belongs to
-                    if (activeSessionRef.current === streamSessionId || activeSessionRef.current === targetViewId) {
+                    if (activeSessionRef.current === streamSessionId || activeSessionRef.current === targetViewId || activeSessionRef.current === currentSessionId) {
                         setMessages((prev) => {
                             if (prev.length === 0) return prev;
                             const lastIdx = prev.length - 1;
                             const lastMsg = prev[lastIdx];
-                            return [
-                                ...prev.slice(0, lastIdx),
-                                { ...lastMsg, content: lastMsg.content + token }
-                            ];
+                            return [...prev.slice(0, lastIdx), { ...lastMsg, content: lastMsg.content + token }];
                         });
                     }
                 }
             );
         } catch (err) {
             console.error('Streaming error:', err);
-            // Show error message only if the user is still looking at the failed chat
-            if (activeSessionRef.current === targetViewId || (backendSessionId && activeSessionRef.current === backendSessionId)) {
+            if (activeSessionRef.current === targetViewId || activeSessionRef.current === currentSessionId) {
                 setMessages((prev) => {
                     if (prev.length === 0) return prev;
                     const lastIdx = prev.length - 1;
                     const lastMsg = prev[lastIdx];
                     if (!lastMsg.content) {
-                        return [
-                            ...prev.slice(0, lastIdx),
-                            {
-                                role: 'assistant',
-                                content: 'Sorry, an error occurred while searching your documents. Please try again.',
-                                sources: []
-                            }
-                        ];
+                        return [...prev.slice(0, lastIdx), {
+                            role: 'assistant',
+                            content: 'Sorry, an error occurred while searching your documents. Please try again.',
+                            sources: []
+                        }];
                     }
                     return prev;
                 });
             }
         } finally {
-            // Unlock generation
             setGeneratingSessions(prev => {
                 const next = new Set(prev);
                 next.delete(targetViewId);
-                // Also clean up by checking all session states
-                for (const item of next) {
-                    if (String(item).startsWith('new_') && item !== activeSessionRef.current) {
-                        next.delete(item);
-                    }
-                }
+                next.delete(currentSessionId);
                 return next;
             });
         }
@@ -228,6 +180,7 @@ export const ChatPage = () => {
                 />
 
                 <main className="chat-viewport">
+                    {/* The structural fix: Removed the "chat-content-container" wrapper so flexbox works! */}
                     <div
                         className="messages-container"
                         ref={scrollContainerRef}
@@ -239,16 +192,19 @@ export const ChatPage = () => {
 
                         {isCurrentLoading && messages[messages.length - 1]?.role === 'assistant' && !messages[messages.length - 1]?.content && (
                             <div className="chat-row assistant-row">
-                                <div className="avatar"><Sparkles size={18} className="animate-pulse" /></div>
+                                <div className="avatar assistant-avatar">
+                                    <Sparkles size={18} className="animate-pulse" />
+                                </div>
                                 <div className="message-bubble loading-bubble">
                                     <Loader2 className="animate-spin" size={18} />
-                                    <span>Searching vector database & synthesizing grounded answer...</span>
+                                    <span>Synthesizing answer from your knowledge base...</span>
                                 </div>
                             </div>
                         )}
                         <div ref={messagesEndRef} />
                     </div>
 
+                    {/* Because the wrapper is gone, this is now pushed perfectly to the bottom */}
                     <form className="chat-input-area" onSubmit={handleSend}>
                         <div className="input-glass-wrapper">
                             <input

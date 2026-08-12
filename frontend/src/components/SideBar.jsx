@@ -29,13 +29,11 @@ export const Sidebar = ({
 
     return (
         <aside className="sidebar">
-            {/* New Chat Button */}
             <button className="new-chat-btn" onClick={onNewChat}>
                 <PlusCircle size={18} />
                 <span>New Chat</span>
             </button>
 
-            {/* SECTION 1: Chat History */}
             <div className="sidebar-section chat-history-section">
                 <div className="section-header">
                     <MessageSquare size={16} />
@@ -44,7 +42,7 @@ export const Sidebar = ({
 
                 <div className="chat-history-scroll">
                     {sessions.length === 0 ? (
-                        <div className="empty-state">No past conversations</div>
+                        <div className="empty-state" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No past conversations</div>
                     ) : (
                         sessions.map((session) => (
                             <div
@@ -73,32 +71,31 @@ export const Sidebar = ({
 
             <hr className="sidebar-divider" />
 
-            {/* SECTION 2: Document Management */}
             <div className="sidebar-section doc-section">
                 <DocumentUploader onUploadSuccess={() => {
                     fetchDocuments();
                     if (onUploadSuccess) onUploadSuccess();
                 }} />
 
-                <div className="doc-library">
+                <div className="doc-library" style={{ marginTop: '1.5rem' }}>
                     <div className="doc-library-header">
                         <Database size={16} />
                         <h3>Indexed Documents</h3>
                     </div>
 
                     {documents.length === 0 ? (
-                        <div className="empty-docs">No documents uploaded yet.</div>
+                        <div className="empty-docs" style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.5rem' }}>No documents uploaded yet.</div>
                     ) : (
-                        <ul className="doc-list">
+                        <ul className="doc-list" style={{ listStyle: 'none', padding: 0 }}>
                             {documents.map((doc) => (
                                 <li key={doc.id || doc.filename} className="doc-item">
                                     <FileText size={16} className="doc-icon" />
-                                    <div className="doc-details">
-                                        {/* Added inline style color: #000 (Black) to override CSS visibility issue */}
-                                        <span className="doc-name" style={{ color: '#000', fontWeight: 'bold' }}>
+                                    <div className="doc-details" style={{ display: 'flex', flexDirection: 'column' }}>
+                                        {/* Inline styles removed so it obeys dark theme CSS variables */}
+                                        <span className="doc-name">
                                             {doc.filename || doc.file_name || doc.name || doc.title || 'Document'}
                                         </span>
-                                        <span className="doc-date" style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                                        <span className="doc-date">
                                             {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'Uploaded'}
                                         </span>
                                     </div>

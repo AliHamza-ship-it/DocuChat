@@ -9,7 +9,7 @@ export const Navbar = () => {
         <header className="navbar">
             <div className="nav-brand">
                 <div className="brand-icon">
-                    <Sparkles size={22} />
+                    <Sparkles size={20} />
                 </div>
                 <span className="brand-title">
                     DocuChat <span className="badge">AI RAG</span>
@@ -22,7 +22,7 @@ export const Navbar = () => {
                         {user?.email || user?.name || 'Logged In User'}
                     </span>
                     <button className="btn-logout" onClick={logout} title="Sign Out">
-                        <LogOut size={16} />
+                        <LogOut size={15} />
                         <span>Logout</span>
                     </button>
                 </div>
