@@ -264,10 +264,20 @@ body {
 .btn-delete {
     background: none;
     border: none;
-    color: var(--text-muted);
+    color: #EF4444;
     cursor: pointer;
+    opacity: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border-radius: 6px;
+    transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.history-item .delete-btn,
+.history-item .btn-delete {
     opacity: 0;
-    transition: opacity 0.15s ease, color 0.15s ease;
 }
 
 .history-item:hover .delete-btn,
@@ -275,9 +285,16 @@ body {
     opacity: 1;
 }
 
+.doc-item .delete-btn,
+.document-card .delete-btn {
+    opacity: 1;
+    color: #EF4444;
+}
+
 .delete-btn:hover,
 .btn-delete:hover {
-    color: #EF4444;
+    color: #FF6B6B;
+    background: rgba(239, 68, 68, 0.12);
 }
 
 .sidebar-divider {
