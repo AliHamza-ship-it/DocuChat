@@ -9,9 +9,9 @@ from fastapi import (
 )
 
 from backend.auth.supabase_auth import get_current_user
-from backend.database.supabase_client import get_supabase_client
 from backend.rag.parser import parse_pdf, parse_docx
 from backend.rag.chunker import process_document_to_chunks
+from backend.database.supabase_client import get_supabase_client
 from backend.embeddings.vectorizer import embedding_service
 from backend.storage.vector_store import vector_store
 from backend.schemas.document import (
@@ -343,3 +343,111 @@ def list_documents(
     )
 
     return res.data or []
+
+
+@router.delete(
+    "/{document_id}",
+)
+def delete_document(
+    document_id: str,
+    current_user: Any = Depends(
+        get_current_user
+    ),
+):
+    """
+    Delete a document and all of its indexed chunks.
+
+    The document must belong to the authenticated user.
+    """
+
+    user_id = get_user_id(
+        current_user
+    )
+
+    supabase = get_supabase_client()
+
+    try:
+        # -----------------------------------------------------
+        # 1. VERIFY DOCUMENT OWNERSHIP
+        # -----------------------------------------------------
+        document_res = (
+            supabase
+            .table("documents")
+            .select("id, filename")
+            .eq("id", document_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+
+        if not document_res.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Document not found.",
+            )
+
+        # -----------------------------------------------------
+        # 2. DELETE ALL VECTOR CHUNKS
+        # -----------------------------------------------------
+        (
+            supabase
+            .table("document_chunks")
+            .delete()
+            .eq("document_id", document_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+        # -----------------------------------------------------
+        # 3. DELETE DOCUMENT RECORD
+        # -----------------------------------------------------
+        delete_res = (
+            supabase
+            .table("documents")
+            .delete()
+            .eq("id", document_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+        if not delete_res.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Document not found or already deleted.",
+            )
+
+        filename = (
+            document_res.data[0].get("filename")
+            or "Document"
+        )
+
+        logger.info(
+            "Document deleted successfully: "
+            "document_id=%s, filename=%s, user_id=%s",
+            document_id,
+            filename,
+            user_id,
+        )
+
+        return {
+            "message": "Document deleted successfully.",
+            "document_id": document_id,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        logger.exception(
+            "Failed to delete document %s for user %s.",
+            document_id,
+            user_id,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to delete the document. "
+                "Please try again."
+            ),
+        ) from exc
