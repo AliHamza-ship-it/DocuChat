@@ -287,8 +287,11 @@ body {
 
 .doc-item .delete-btn,
 .document-card .delete-btn {
-    opacity: 1;
-    color: #EF4444;
+    margin-left: auto;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    padding: 0;
 }
 
 .delete-btn:hover,
@@ -390,6 +393,7 @@ body {
     align-items: center;
     gap: 0.75rem;
     padding: 0.75rem;
+    padding-right: 0.75rem;
     background: var(--bg-card) !important;
     border-radius: 10px;
     border: 1px solid var(--border-color);
@@ -406,6 +410,8 @@ body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    flex: 1;
+    min-width: 0;
 }
 
 .doc-name {
